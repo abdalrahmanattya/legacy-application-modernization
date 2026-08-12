@@ -32,20 +32,20 @@ jobs:
           test "$(docker compose exec -T order-reference node -p 'process.getuid()')" = 1000
           ! docker run --rm -e ENVIRONMENT=container order-reference-service:ci >/tmp/container-config.log 2>&1
           grep -q 'production token configuration is invalid' /tmp/container-config.log
-      - uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.28.0
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: order-reference-service:ci
           format: table
           severity: CRITICAL,HIGH
           exit-code: 1
-      - uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.28.0
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: order-reference-service:ci
           format: json
           output: wave1-evidence/trivy-summary.json
           severity: CRITICAL,HIGH
           exit-code: 0
-      - uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.28.0
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: order-reference-service:ci
           format: cyclonedx
