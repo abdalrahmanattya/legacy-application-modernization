@@ -1,0 +1,23 @@
+# Dependencies and local tooling
+node_modules/
+.env
+.env.*
+!.env.example
+.venv/
+
+# Build and test output
+dist/
+build/
+coverage/
+.cache/
+
+# Infrastructure state and generated cloud artifacts
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfplan
+cdk.out/
+*.pem
+
+# Local operating material
+.DS_Store
