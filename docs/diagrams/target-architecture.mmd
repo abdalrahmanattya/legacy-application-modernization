@@ -1,0 +1,29 @@
+flowchart LR
+    subgraph local["Locally verified boundary"]
+      client([Client]) --> api["Node.js API\n/healthz · /readyz · /v1 · /v2"]
+      api --> sqlite[(SQLite fixture)]
+      api --> outbox["Transactional outbox"]
+      outbox --> publisher["Publisher process"]
+      publisher --> worker["Report worker"]
+      worker --> artifact["Local artifact store"]
+    end
+
+    subgraph aws["AWS target design — not deployed"]
+      waf["Regional WAF +\nprivate HTTPS ALB"] --> ecs["Private ECS/Fargate\nAPI task"]
+      ecs --> aurora[(Aurora PostgreSQL)]
+      ecs --> sqs["SQS + DLQ"]
+      sqs --> workerAws["ECS report worker"]
+      workerAws --> s3[(Private S3 artifacts)]
+      ecs --> logs["CloudWatch logs,\nmetrics, alarms"]
+      workerAws --> logs
+      oidc["GitHub OIDC\nplanned delivery identity"] -. plan-only .-> tf["Terraform\nreviewable target"]
+    end
+
+    local -. same ports and contracts .-> aws
+
+    classDef local fill:#ecfdf5,stroke:#15803d,color:#14532d
+    classDef target fill:#eff6ff,stroke:#2563eb,color:#1e3a8a
+    classDef warning fill:#fff7ed,stroke:#c2410c,color:#7c2d12
+    class local local
+    class aws target
+    class oidc,tf warning
