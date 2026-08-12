@@ -1,0 +1,35 @@
+services:
+  order-reference:
+    image: ${IMAGE_REF:-order-reference-service:wave1}
+    env_file: .env.example
+    environment:
+      ENVIRONMENT: local
+      ORDER_DB_PATH: /data/orders.sqlite
+    ports:
+      - "3000:3000"
+    volumes:
+      - order-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    pids_limit: 128
+    mem_limit: 256m
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 12s
+volumes:
+  order-data:

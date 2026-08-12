@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env*
+node_modules
+baseline-data
+coverage
+tools/baseline/evidence-results
+docs
+tests
+*.sqlite*
+npm-debug.log*

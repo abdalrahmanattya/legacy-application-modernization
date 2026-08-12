@@ -1,0 +1,63 @@
+name: baseline-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run format
+      - run: npm audit --audit-level=high
+      - run: docker buildx build --platform linux/amd64 --load --pull=false -t order-reference-service:ci .
+      - run: mkdir -p wave1-evidence
+      - run: docker image inspect order-reference-service:ci --format '{{.Id}} {{.Os}}/{{.Architecture}} {{.Config.User}} {{json .Config.Healthcheck}}' | tee wave1-evidence/image.txt
+      - run: chmod +x scripts/container-acceptance.sh && WAVE1_PORT=18080 scripts/container-acceptance.sh order-reference-service:ci | tee wave1-evidence/runtime.txt
+      - run: |
+          IMAGE_REF=order-reference-service:ci docker compose up -d --wait
+          trap 'docker compose down -v' EXIT
+          curl --fail --silent http://127.0.0.1:3000/readyz
+          test "$(docker compose exec -T order-reference node -p 'process.getuid()')" = 1000
+          ! docker run --rm -e ENVIRONMENT=container order-reference-service:ci >/tmp/container-config.log 2>&1
+          grep -q 'production token configuration is invalid' /tmp/container-config.log
+      - uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.28.0
+        with:
+          image-ref: order-reference-service:ci
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 1
+      - uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.28.0
+        with:
+          image-ref: order-reference-service:ci
+          format: json
+          output: wave1-evidence/trivy-summary.json
+          severity: CRITICAL,HIGH
+          exit-code: 0
+      - uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.28.0
+        with:
+          image-ref: order-reference-service:ci
+          format: cyclonedx
+          output: sbom.json
+          exit-code: 0
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: order-reference-service-sbom
+          path: sbom.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: wave1-runtime-evidence
+          path: wave1-evidence/
+          if-no-files-found: error

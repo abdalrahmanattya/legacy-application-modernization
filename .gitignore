@@ -9,6 +9,10 @@ node_modules/
 dist/
 build/
 coverage/
+.evidence-results/
+tools/baseline/evidence-results/*
+!tools/baseline/evidence-results/.gitkeep
+wave1-evidence/
 .cache/
 
 # Infrastructure state and generated cloud artifacts
@@ -21,3 +25,12 @@ cdk.out/
 
 # Local operating material
 .DS_Store
+# Baseline local runtime data
+baseline-data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+npm-debug.log*
+.env
+.env.*
+!.env.example

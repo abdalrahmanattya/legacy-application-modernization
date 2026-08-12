@@ -29,7 +29,10 @@ a credential-free local mode.
 
 - **Wave 0:** establish baseline behaviour, threat model, SLO candidates, and
   dependency inventory.
-- **Wave 1:** containerize and harden the original service locally.
+- **Wave 1:** containerize and harden the original service locally. The current
+  evidence verifies a pinned Node 24 image, non-root/read-only Compose posture,
+  `/data` persistence, readiness healthcheck, and graceful shutdown; hosted CI
+  and cloud execution remain unverified.
 - **Wave 2:** introduce repeatable infrastructure and secure delivery seams.
 - **Wave 3:** validate resilience, observability, rollback, and cost posture.
 

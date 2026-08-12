@@ -1,3 +1,21 @@
+# Wave 1 container security
+
+The local container runs as the image's non-root `node` user with a read-only
+root filesystem. `/data` is the only declared writable volume and contains the
+SQLite database. Compose drops all Linux capabilities, enables
+`no-new-privileges`, bounds PIDs and memory, and uses a small noexec `/tmp`
+tmpfs.
+
+Local fixture tokens are explicitly disposable. Outside `ENVIRONMENT=local`,
+startup fails unless all three token environment variables are nonblank and
+distinct. Tokens are compared without logging their values. The process-local
+rate limiter and SQLite persistence are baseline controls, not distributed
+production controls.
+
+The pinned Node 24 base image and lockfile are reviewed inputs. CI is designed
+to run dependency and image scans without AWS credentials; hosted results are
+not claimed until a workflow run is observed.
+
 # Security Boundaries
 
 Security is part of the architecture acceptance criteria.

@@ -1,0 +1,23 @@
+{
+  "name": "order-reference-service-baseline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Original legacy baseline Order Reference Service",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "start": "node app/baseline/server.js",
+    "dev": "node --watch app/baseline/server.js",
+    "seed": "node scripts/baseline/seed.js",
+    "reset": "node scripts/baseline/reset.js",
+    "test": "node --test tests/baseline/*.test.js",
+    "lint": "node scripts/baseline/lint.js",
+    "format": "node scripts/baseline/format.js",
+    "audit": "npm audit --audit-level=high"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2"
+  }
+}
