@@ -24,7 +24,7 @@ Evidence labels:
 | Baseline risks and SLOs            | `docs/assessment/`                                       | Specified                                                                                            | Measurement harness and owner review                                   |
 | Node runtime                       | ADR 002                                                  | Decision recorded                                                                                    | Runtime/version and dependency checks                                  |
 | Local service behavior             | `app/baseline/`, `tests/baseline/`                       | Locally verified: Node 24 7/7 tests; lifecycle harness 16/16; characterization helper tests 4/4      | Wave 1 container test run                                              |
-| Container/build/security scans     | `Dockerfile`, `compose.yaml`, `.github/workflows/ci.yml` | Locally verified: image build, Compose config, non-root and fail-fast checks; hosted scan unverified | Observe hosted CI; retain image scan output                            |
+| Container/build/security scans     | `Dockerfile`, `compose.yaml`, `.github/workflows/ci.yml` | Locally and hosted verified on merged main run `31628031475`: image build, Compose config, non-root/fail-fast checks, Trivy image scan, and SBOM artifact | Cloud runtime remains unverified |
 | AWS network/identity/data controls | No infrastructure yet                                    | Not evidenced                                                                                        | Separately approved target validation                                  |
 | SQLite async adapter parity        | Wave 2 Node 24 suite                                     | Locally verified: `/v1`, hashed-key concurrency, signed cursors, report jobs and redaction           | Preserve in container acceptance                                       |
 | PostgreSQL migrations/parity       | Disposable PostgreSQL 17 integration test                | Locally verified: repeatable empty migration, concurrent idempotency/transitions, schema readiness   | Add hosted disposable-service execution; RDS remains unverified        |
@@ -32,14 +32,14 @@ Evidence labels:
 | Versioned asynchronous reports     | Outbox/queue/artifact ports, publisher and worker         | Locally verified: local execution, duplicate/failure paths, lease and visibility renewal             | SQS retry/DLQ and ECS draining remain cloud-unverified                 |
 | AWS report adapters                | Injected AWS SDK v3 client tests                          | Locally verified: safe SQS payload/lifecycle, S3 checksum/metadata and bounded private presign        | SQS/S3/KMS policy and runtime behavior remain cloud-unverified         |
 | Production configuration contract | Mode-specific fail-fast tests and runtime contract        | Locally verified: raw secrets, verified PostgreSQL TLS, JWT-only API, queue/bucket requirements       | Rendered task execution and Secrets Manager injection remain unverified |
-| Wave 3 telemetry and worker resilience | `tests/wave3/` and injected fault adapters | Locally verified: trace-context preservation, bounded/redacted telemetry, duplicate/crash/poison retry paths | Hosted exporter, SQS redrive, and ECS draining remain cloud-unverified |
-| Wave 3 PostgreSQL API recovery | `scripts/postgresql/wave3-api-recovery.js` | Locally verified on PostgreSQL 17: two API processes, 30-request load, API kill/restart, DB stop/start, readiness 503/200 recovery, post-recovery create; hosted CI job configured but not yet run | RDS Multi-AZ/failover remains cloud-unverified |
-| Wave 3 PostgreSQL backup restore | `scripts/postgresql/wave3-restore-drill.sh` | Locally verified on PostgreSQL 17: pg_dump/pg_restore integrity and secret-free ignored JSON evidence; hosted CI job configured but not yet run | RDS PITR and approved isolated restore remain cloud-unverified |
+| Wave 3 telemetry and worker resilience | `tests/wave3/` and injected fault adapters | Locally verified and included in merged main run `31628031475`: trace-context preservation, bounded/redacted telemetry, duplicate/crash/poison retry paths | Hosted exporter, SQS redrive, and ECS draining remain cloud-unverified |
+| Wave 3 PostgreSQL API recovery | `scripts/postgresql/wave3-api-recovery.js` | Locally and hosted verified on PostgreSQL 17 in merged main run `31628031475`: two API processes, 30-request load, API kill/restart, DB stop/start, readiness 503/200 recovery, post-recovery create | RDS Multi-AZ/failover remains cloud-unverified |
+| Wave 3 PostgreSQL backup restore | `scripts/postgresql/wave3-restore-drill.sh` | Locally and hosted verified on PostgreSQL 17 in merged main run `31628031475`: pg_dump/pg_restore integrity and secret-free evidence artifact | RDS PITR and approved isolated restore remain cloud-unverified |
 
-The Wave3 PostgreSQL CI job is configured with a disposable PostgreSQL 17
-service, local-only credentials, bounded runtime, cleanup, and pinned artifact
-upload. Hosted execution and artifact review remain pending; no AWS credentials
-or cloud resources are used.
+The Wave3 PostgreSQL CI job uses a disposable PostgreSQL 17 service, local-only
+credentials, bounded runtime, cleanup, and pinned artifact upload. Hosted CI
+verified the job on merged main; no AWS credentials or cloud resources were
+used.
 
 Wave 0 is accepted locally, not production or cloud verified. The Node 24
 measurement record includes 30/30 and 100/100 samples with p95 11.820 ms and

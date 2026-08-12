@@ -1,133 +1,118 @@
 # Legacy Application Modernization
 
-An original, local-first Wave 0 baseline for an Order Reference Service. The
-repository demonstrates how a deliberately constrained Node.js monolith can be
-made explicit and testable before containerization or AWS migration.
+An evidence-led modernization of a deliberately constrained Node.js Order
+Reference Service. The project shows how to move from a testable monolith to
+an operable, security-conscious container and AWS target without pretending
+that a plan is a deployment.
 
-## Status
+## What this demonstrates
 
-Waves 0–1 are accepted and the Wave 2 application and AWS-adapter seams are
-implemented locally, but the service is **not production-ready**. The
-repository has no AWS deployment, endpoint, production data, or cloud
-execution claim. Node 24 evidence records 20/20 main-suite tests plus the
-separate 1/1 PostgreSQL integration test passing against a disposable
-database.
-The container acceptance script verifies lifecycle, ownership, idempotency,
-transitions, reports, persistence, filesystem, configuration, and shutdown
-boundaries. These are local results; Wave 2 hosted CI and cloud evidence are
-not claimed.
+- A preserved `/v1` HTTP contract with validation, idempotency, ownership,
+  transitions, reports, correlation IDs, and safe error envelopes.
+- Node 24 application seams for SQLite, PostgreSQL, JWT validation, SQS, S3,
+  asynchronous report jobs, telemetry, and graceful shutdown.
+- A non-root, read-only container with immutable image input, health/readiness
+  boundaries, CA provenance, and process-specific runtime contracts.
+- Plan-only Terraform for private networking, ECS/Fargate, Aurora, ECR, S3,
+  SQS/DLQ, WAF, Cognito metadata, KMS, CloudWatch, autoscaling, and constrained
+  GitHub OIDC design.
+- Operational runbooks and deterministic evidence for recovery, backup/restore,
+  worker failure paths, cost sensitivity, and publication boundaries.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  Client["Client"] --> ALB["Private ALB / HTTPS"]
+  ALB --> API["ECS API task"]
+  API --> DB["Aurora PostgreSQL"]
+  API --> Queue["SQS work queue"]
+  Publisher["ECS outbox publisher"] --> Queue
+  Queue --> Worker["ECS report worker"]
+  Worker --> DB
+  Worker --> Bucket["Private S3 artifacts"]
+  API --> Logs["CloudWatch logs and alarms"]
+  Worker --> Logs
+  WAF["Regional WAF"] -. protects .-> ALB
+  OIDC["GitHub OIDC"] -. planned deployment identity .-> Terraform["Terraform plan-only target"]
+```
+
+CloudFront is an optional edge layer with a separate us-east-1 certificate.
+The direct Terraform target remains private and requires explicit regional
+certificate inputs and an immutable container digest.
+
+## Status and evidence
+
+Waves 0–3 are implemented and locally accepted. The merged main CI run
+[`31628031475`](https://github.com/abdalrahmanattya/legacy-application-modernization/actions/runs/31628031475)
+covered the Node suite, Wave3 tests, container build/acceptance, Trivy image
+checks, SBOM generation, disposable PostgreSQL integration, recovery, and
+backup/restore evidence. The repository has no hosted application endpoint.
+
+The evidence matrix classifies each result as specified, structurally reviewed,
+locally verified, hosted verified, or cloud verified. AWS services, credentials,
+production data, RDS failover/PITR, ECS rollback, SQS redrive, WAF/ACM delivery,
+OIDC trust, and regional recovery remain cloud-unverified. The apply workflow is
+intentionally disabled.
+
+See:
+
+- [HTTP contract](docs/api/order-reference-contract.md)
+- [Architecture](docs/architecture.md)
+- [Runtime contract](docs/application-runtime-contract.md)
+- [Security](docs/security.md)
+- [Threat model](docs/threat-model.md)
+- [Evidence matrix](docs/evidence/evidence-matrix.md)
+- [Wave 3 operations and recovery](docs/wave3/operations-and-recovery.md)
+- [Wave 3 exit and go/no-go](docs/wave3/exit-and-go-no-go.md)
 
 ## Run locally
 
-Node `>=24 <25` is required because the baseline uses built-in `node:sqlite`.
+Node `>=24 <25` is required.
 
 ```sh
-npm install
+npm ci
 npm run reset
 npm run seed
 npm test
+npm run test:wave3
 npm run lint
 npm run format
-npm run audit
+npm audit --audit-level=high
 ENVIRONMENT=local npm start
 ```
 
-The service listens on port 3000 by default. `GET /healthz` is liveness;
-`GET /readyz` checks SQLite readiness. `GET /` and `POST /ui/orders` are a
-local-only demonstration UI and are not the canonical API. Reset the local
-database before repeating deterministic seed runs.
-
-## API baseline
-
-| Method | Route                  | Boundary                                           |
-| ------ | ---------------------- | -------------------------------------------------- |
-| GET    | `/healthz`             | public liveness                                    |
-| GET    | `/readyz`              | public readiness; 503 on storage failure           |
-| GET    | `/v1/products`         | public synthetic catalog                           |
-| POST   | `/v1/orders`           | operator/admin bearer; mandatory `Idempotency-Key` |
-| GET    | `/v1/orders`           | principal-scoped operator/admin list               |
-| GET    | `/v1/orders/{orderId}` | owner or admin retrieval                           |
-| POST   | `/v1/orders/{orderId}` | owner or admin state transition                    |
-| GET    | `/v1/reports/orders`   | admin-only bounded JSON/CSV aggregate              |
-
-Orders use opaque customer references, UUID v4 IDs, USD minor units, seeded
-`DEMO-*` products, bounded quantities and totals, principal-scoped
-idempotency, and terminal lifecycle states. Every response carries
-`X-Correlation-ID`. Invalid input returns 422, idempotency conflicts 409,
-unknown/out-of-scope orders 404, and unexpected failures use a sanitized 500
-envelope.
-
-The baseline enforces a 200 KiB request-body limit and a process-local,
-per-principal/per-route rate limiter with `429` and `Retry-After`. This is a
-local demonstration control; distributed enforcement remains a future edge or
-platform concern. `npm run reset` removes the local SQLite database and its
-sidecar files.
-
-## Container mode
+The service listens on port 3000. `GET /healthz` is liveness and `GET /readyz`
+is readiness. The local-only UI is available at `/`; it is not the canonical
+API. Compose provides a disposable SQLite container boundary:
 
 ```sh
-docker build -t order-reference-service:wave1 .
+docker build -t order-reference-service:local .
 docker compose up --build -d
 curl http://127.0.0.1:3000/readyz
 docker compose down
 ```
 
-Compose uses disposable `.env.example` fixtures, a named `/data` volume,
-read-only root filesystem, dropped capabilities, and a non-root image user.
-The Compose path explicitly selects credential-free local mode and disposable
-fixture tokens. Production mode does not accept those fixtures: it requires
-PostgreSQL with verified TLS, JWT authentication, and the process-specific
-configuration in the [runtime contract](docs/application-runtime-contract.md).
-The image healthcheck calls `/readyz` with Node and installs no curl.
+## Production-shaped modes
 
-## Wave 2 application mode
+The same image has separate API, migration, outbox-publisher, and report-worker
+commands. Production mode requires PostgreSQL with verified TLS, JWT identity,
+raw secret injection, process-specific SQS/S3 settings, and a separately
+controlled migration task. See the [runtime contract](docs/application-runtime-contract.md).
 
-SQLite remains the default credential-free local adapter. The service now
-uses asynchronous repository and identity ports so the same `/v1` behavior can
-run against PostgreSQL. PostgreSQL migrations are intentionally separate from
-application startup:
+Terraform under `infra/` is a reviewable, non-applied target. Use Terraform
+1.15.8, backend-disabled validation, and an explicit immutable image digest.
+Do not apply it without separate approval, a reviewed state backend, protected
+deployment environment, certificate ARNs, secret bootstrap, and cloud recovery
+plan.
 
-Use `npm run migrate:postgresql` as a separately controlled task, then run the
-same image as the API, outbox publisher, and report worker. Production requires
-raw `DATABASE_URL` and `CURSOR_SIGNING_SECRET` secret values, verified
-`DATABASE_SSL_CA_PATH` trust material (or inline CA content), exact Cognito issuer/client values, and
-process-specific SQS/S3 settings. See the
-[runtime contract](docs/application-runtime-contract.md) for the exact command,
-environment, secret, IAM, lease, and shutdown contract.
+## Provenance and licensing
 
-The PostgreSQL adapter provides transactional, 24-hour idempotency records,
-row-locked transitions, signed scope-bound cursors, schema-aware readiness,
-and async pool shutdown. Cognito-compatible JWT validation is tested with
-local JWKS fixtures. The local fixture adapter remains a local evidence seam.
+This is an original successor project. The historical repository is referenced
+only for migration context; application artifacts and generated cloud files
+were not copied. The repository is licensed under the [MIT License](LICENSE).
+`package.json` retains `private: true` intentionally: this is a portfolio
+repository, not an npm package publication target.
 
-`POST /v2/report-jobs`, `GET /v2/report-jobs/{jobId}`, and the authenticated
-`GET /v2/report-jobs/{jobId}/download` add a versioned durable report-job
-contract while preserving the synchronous `/v1` export. The production ports
-use SQS Standard delivery and private S3 artifacts with SHA-256 checksums and
-short-lived presigned downloads. AWS SDK behavior is tested through injected
-clients only; SQS, S3, KMS, Cognito, and ECS behavior remain cloud-unverified.
-
-## Evidence and modernization direction
-
-The current evidence includes Node 24 tests, lint, formatting, audit, reset /
-seed verification, restart persistence, and readiness failure behavior. SQLite
-locking/read-only experiments and AWS deployment are explicitly
-plan-only. Wave 1 preserves the API contract and adds the local deployment
-boundary without claiming that AWS resources exist.
-
-Detailed contract and decisions:
-
-- [Order Reference HTTP Contract](docs/api/order-reference-contract.md)
-- [OpenAPI contract](docs/api/openapi.yaml)
-- [Architecture](docs/architecture.md)
-- [Security](docs/security.md)
-- [Development](docs/development.md)
-- [Threat model](docs/threat-model.md)
-- [Evidence matrix](docs/evidence/evidence-matrix.md)
-
-## Provenance
-
-This is an original successor project. The historical
-`nodejs-application-migration` repository is referenced only for migration
-questions and architectural lessons; its application artifacts and generated
-cloud files are not copied here.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) before
+opening a change.
