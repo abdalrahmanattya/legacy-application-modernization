@@ -10,7 +10,11 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit && npm cache clean --force
 COPY app ./app
 COPY scripts/baseline ./scripts/baseline
-RUN mkdir -p /data && chown -R node:node /app /data
+# npm is build-time tooling only; remove the globally bundled npm tree from
+# the runtime image so its transitive CLI dependencies are not shipped.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+    && mkdir -p /data && chown -R node:node /app /data
 USER node
 EXPOSE 3000
 VOLUME ["/data"]
