@@ -1,38 +1,26 @@
 const http = require("node:http");
 const crypto = require("node:crypto");
-const { timingSafeEqual } = crypto;
 const { URL } = require("node:url");
 const querystring = require("node:querystring");
-const { openDatabase, seedProducts } = require("./db");
-const service = require("./service");
+const { openDatabase } = require("./db");
+const domain = require("./service");
+const { SqliteRepository } = require("../repositories/sqlite");
+const { cursorCodec } = require("../core/cursor");
+const { AppError, validation, badRequest } = require("../core/errors");
+const { DEFAULT_FIXTURES, localAuthenticator } = require("../auth/local");
+const { createTelemetry } = require("../observability/telemetry");
+
 const PORT = Number(process.env.PORT || 3000);
-const LOCAL_TOKENS = {
-  "operator-a": process.env.OPERATOR_A_TOKEN || "local-operator-a-token",
-  "operator-b": process.env.OPERATOR_B_TOKEN || "local-operator-b-token",
-  admin: process.env.ADMIN_TOKEN || "local-admin-token",
-};
-const TOKEN_ENV = {
-  "operator-a": "OPERATOR_A_TOKEN",
-  "operator-b": "OPERATOR_B_TOKEN",
-  admin: "ADMIN_TOKEN",
-};
 function configuredTokens() {
-  if (process.env.ENVIRONMENT === "local") return LOCAL_TOKENS;
-  const tokens = Object.fromEntries(
-    Object.entries(TOKEN_ENV).map(([role, name]) => [
-      role,
-      process.env[name]?.trim(),
-    ]),
-  );
-  if (
-    Object.values(tokens).some(
-      (token) => typeof token !== "string" || !token.trim(),
-    ) ||
-    new Set(Object.values(tokens)).size !== Object.values(tokens).length
-  )
-    throw new Error("production token configuration is invalid");
-  return tokens;
+  if (process.env.ENVIRONMENT !== "local")
+    throw new Error("local fixture authentication is unavailable");
+  return DEFAULT_FIXTURES;
 }
+
+function configuredAuthenticator() {
+  return localAuthenticator(configuredTokens());
+}
+
 const RFC3339 =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
 function parseRfc3339(value) {
@@ -47,38 +35,61 @@ function correlation(request) {
     ? supplied
     : crypto.randomUUID();
 }
-function log(event, fields) {
-  process.stdout.write(
-    JSON.stringify({ timestamp: new Date().toISOString(), event, ...fields }) +
-      "\n",
-  );
+function traceparent(request) {
+  const value = request.headers.traceparent;
+  const match =
+    typeof value === "string" &&
+    value.match(/^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/i);
+  return match && !/^0+$/.test(match[1]) && !/^0+$/.test(match[2])
+    ? value.toLowerCase()
+    : null;
 }
-function identity(request, tokens) {
-  const parts = String(request.headers.authorization || "").split(" ");
-  if (parts.length !== 2) return null;
-  const [scheme, token] = parts;
-  if (scheme?.toLowerCase() !== "bearer" || !token) return null;
-  for (const [role, expected] of Object.entries(tokens)) {
-    const a = Buffer.from(token);
-    const b = Buffer.from(expected);
-    if (a.length === b.length && timingSafeEqual(a, b)) return role;
-  }
-  return null;
+function traceId(value) {
+  return value ? value.split("-")[1] : null;
+}
+function defaultLogger(event) {
+  process.stdout.write(`${JSON.stringify(event)}\n`);
+}
+function normalizedRoute(method, pathname) {
+  if (/^\/v1\/orders\/[0-9a-f-]{36}$/i.test(pathname))
+    return `${method} /v1/orders/{orderId}`;
+  if (/^\/v2\/report-jobs\/[0-9a-f-]{36}$/i.test(pathname))
+    return `${method} /v2/report-jobs/{jobId}`;
+  if (/^\/v2\/report-jobs\/[0-9a-f-]{36}\/download$/i.test(pathname))
+    return `${method} /v2/report-jobs/{jobId}/download`;
+  const known = new Set([
+    "/healthz",
+    "/readyz",
+    "/v1/products",
+    "/v1/orders",
+    "/v1/reports/orders",
+    "/v2/report-jobs",
+    "/",
+    "/ui/orders",
+  ]);
+  return known.has(pathname) ? `${method} ${pathname}` : `${method} unmatched`;
 }
 async function readBody(request) {
   let text = "";
   let bytes = 0;
   for await (const chunk of request) {
-    bytes += Buffer.byteLength(chunk);
-    if (bytes > 204800) throw new Error("request too large");
+    bytes += chunk.length;
+    if (bytes > 204800)
+      throw new AppError("payload_too_large", "request is too large", 413);
     text += chunk;
   }
   if (!text) return {};
-  return (request.headers["content-type"] || "").startsWith(
-    "application/x-www-form-urlencoded",
+  if (
+    (request.headers["content-type"] || "").startsWith(
+      "application/x-www-form-urlencoded",
+    )
   )
-    ? querystring.parse(text)
-    : JSON.parse(text);
+    return querystring.parse(text);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw badRequest("request body is not valid JSON");
+  }
 }
 function send(response, status, payload, id, headers = {}) {
   response.writeHead(status, {
@@ -88,71 +99,112 @@ function send(response, status, payload, id, headers = {}) {
   });
   response.end(JSON.stringify(payload));
 }
-function error(response, status, code, message, id, details = {}) {
+function sendError(response, error, id) {
+  const expected = error instanceof AppError;
   send(
     response,
-    status,
-    { error: code, message, correlationId: id, details },
+    expected ? error.status : 500,
+    {
+      error: expected ? error.code : "internal_error",
+      message:
+        expected && error.expose
+          ? error.message
+          : "request could not be completed",
+      correlationId: id,
+      details: {},
+    },
     id,
   );
 }
-function ui(db) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Order Reference Service</title></head><body><main><h1>Order Reference Service</h1><p>Local demonstration UI; the canonical interface is the JSON API.</p><ul>${service
-    .products(db)
-    .map((p) => `<li>${p.sku}: ${p.name}</li>`)
-    .join(
-      "",
-    )}</ul><form method="post" action="/ui/orders"><label>Bearer fixture <input name="token" type="password" required></label><label>Customer reference <input name="customerReference" required></label><label>SKU <input name="sku" value="DEMO-PLATFORM-001" required></label><label>Quantity <input name="quantity" type="number" min="1" max="100" value="1" required></label><button>Create order</button></form></main></body></html>`;
+function reportFilters(url) {
+  const status = url.searchParams.get("status");
+  if (status && !domain.STATUSES.includes(status))
+    throw validation("invalid status filter");
+  const fromInput = url.searchParams.get("createdFrom");
+  const toInput = url.searchParams.get("createdTo");
+  const createdFrom = fromInput ? parseRfc3339(fromInput) : null;
+  const createdTo = toInput ? parseRfc3339(toInput) : null;
+  if (
+    (fromInput && !createdFrom) ||
+    (toInput && !createdTo) ||
+    (createdFrom && createdTo && createdFrom > createdTo)
+  )
+    throw validation("invalid date filter");
+  return { status, createdFrom, createdTo };
 }
-function createServer({ db = openDatabase(), rateLimit = {} } = {}) {
-  const tokens = configuredTokens();
-  seedProducts(db);
+async function ui(service) {
+  const products = await service.products();
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Order Reference Service</title></head><body><main><h1>Order Reference Service</h1><p>Local demonstration UI; the canonical interface is the JSON API.</p><ul>${products.map((product) => `<li>${product.sku}: ${product.name}</li>`).join("")}</ul><form method="post" action="/ui/orders"><label>Bearer fixture <input name="token" type="password" required></label><label>Customer reference <input name="customerReference" required></label><label>SKU <input name="sku" value="DEMO-PLATFORM-001" required></label><label>Quantity <input name="quantity" type="number" min="1" max="100" value="1" required></label><button>Create order</button></form></main></body></html>`;
+}
+
+function createServer({
+  db,
+  repository = new SqliteRepository(db || openDatabase()),
+  authenticator = configuredAuthenticator(),
+  artifactStore = null,
+  reportDownloadExpiresSeconds = 300,
+  logger = defaultLogger,
+  telemetry = createTelemetry(),
+  rateLimit = {},
+  cursorSecret = process.env.CURSOR_SIGNING_SECRET ||
+    (process.env.ENVIRONMENT === "local"
+      ? "local-cursor-signing-secret-not-for-shared-use"
+      : null),
+} = {}) {
+  const service = domain.createOrderService({
+    repository,
+    cursorCodec: cursorCodec(cursorSecret),
+  });
+  let initialization;
+  try {
+    initialization = Promise.resolve(repository.initialize());
+  } catch (error) {
+    initialization = Promise.reject(error);
+  }
   const counters = new Map();
+  const localRateLimit = process.env.ENVIRONMENT === "local";
   const limit = rateLimit.limit ?? 120;
   const windowMs = rateLimit.windowMs ?? 60_000;
   const checkRate = (key) => {
+    if (!localRateLimit) return 0;
     const current = counters.get(key);
-    const nowMs = Date.now();
-    if (!current || nowMs >= current.resetAt) {
-      counters.set(key, { count: 1, resetAt: nowMs + windowMs });
+    const now = Date.now();
+    if (!current || now >= current.resetAt) {
+      counters.set(key, { count: 1, resetAt: now + windowMs });
       return 0;
     }
     current.count += 1;
     return current.count > limit
-      ? Math.max(1, Math.ceil((current.resetAt - nowMs) / 1000))
+      ? Math.max(1, Math.ceil((current.resetAt - now) / 1000))
       : 0;
   };
   const server = http.createServer(async (request, response) => {
+    const started = process.hrtime.bigint();
     const id = correlation(request);
+    const traceContext = traceparent(request);
+    const trace = traceId(traceContext);
     const url = new URL(
       request.url,
       `http://${request.headers.host || "localhost"}`,
     );
+    const route = normalizedRoute(request.method, url.pathname);
+    const requestSpan = telemetry.startHttp({
+      method: request.method,
+      route,
+      traceparent: traceContext,
+    });
+    let identity = null;
+    let outcome = "success";
     try {
-      if (server.draining)
-        return error(
-          response,
-          503,
-          "unavailable",
-          "service is shutting down",
-          id,
-        );
+      await initialization;
       if (request.method === "GET" && url.pathname === "/healthz")
         return send(response, 200, { status: "ok" }, id);
+      if (server.draining)
+        throw new AppError("unavailable", "service is shutting down", 503);
       if (request.method === "GET" && url.pathname === "/readyz") {
-        try {
-          if (server.draining) throw new Error("service is shutting down");
-          db.prepare("SELECT 1").get();
-          return send(response, 200, { status: "ready", storage: "ok" }, id);
-        } catch {
-          return error(
-            response,
-            503,
-            "unavailable",
-            "storage is unavailable",
-            id,
-          );
-        }
+        if (!(await repository.ready()))
+          throw new AppError("unavailable", "storage is unavailable", 503);
+        return send(response, 200, { status: "ready", storage: "ok" }, id);
       }
       if (
         request.method === "GET" &&
@@ -163,39 +215,30 @@ function createServer({ db = openDatabase(), rateLimit = {} } = {}) {
           "content-type": "text/html; charset=utf-8",
           "x-correlation-id": id,
         });
-        return response.end(ui(db));
+        return response.end(await ui(service));
       }
       if (request.method === "GET" && url.pathname === "/v1/products")
-        return send(response, 200, service.products(db), id);
+        return send(response, 200, await service.products(), id);
       if (
         request.method === "POST" &&
         url.pathname === "/ui/orders" &&
         process.env.ENVIRONMENT === "local"
       ) {
         const body = await readBody(request);
-        const role = identity(
-          {
-            headers: { authorization: `Bearer ${body.token}` },
-          },
-          tokens,
-        );
-        if (!role)
-          return error(
-            response,
-            401,
+        identity = await authenticator.authenticate(`Bearer ${body.token}`);
+        if (!identity)
+          throw new AppError(
             "unauthenticated",
             "valid bearer authentication is required",
-            id,
+            401,
           );
-        const input = {
-          customerReference: body.customerReference,
-          lineItems: [{ sku: body.sku, quantity: Number(body.quantity) }],
-        };
-        const result = service.createOrder(
-          db,
-          input,
+        const result = await service.createOrder(
+          {
+            customerReference: body.customerReference,
+            lineItems: [{ sku: body.sku, quantity: Number(body.quantity) }],
+          },
           `ui-${crypto.randomUUID()}`,
-          role,
+          identity,
         );
         response.writeHead(303, {
           location: `/v1/orders/${result.order.orderId}`,
@@ -203,46 +246,41 @@ function createServer({ db = openDatabase(), rateLimit = {} } = {}) {
         });
         return response.end();
       }
-      if (!url.pathname.startsWith("/v1/"))
-        return error(response, 404, "not_found", "resource not found", id);
-      const role = identity(request, tokens);
-      if (!role)
-        return error(
-          response,
-          401,
+      if (!url.pathname.startsWith("/v1/") && !url.pathname.startsWith("/v2/"))
+        throw new AppError("not_found", "resource not found", 404);
+      identity = await authenticator.authenticate(
+        request.headers.authorization,
+      );
+      if (!identity)
+        throw new AppError(
           "unauthenticated",
           "valid bearer authentication is required",
-          id,
+          401,
         );
-      const retryAfter = checkRate(`${role}:${request.method}:${url.pathname}`);
+      if (
+        !identity.roles.includes("operator") &&
+        !identity.roles.includes("admin")
+      )
+        throw new AppError(
+          "forbidden",
+          "an approved Cognito group is required",
+          403,
+        );
+      const retryAfter = checkRate(
+        `${identity.subject}:${normalizedRoute(request.method, url.pathname)}`,
+      );
       if (retryAfter) {
         response.setHeader("retry-after", String(retryAfter));
-        return error(
-          response,
-          429,
-          "rate_limited",
-          "request rate exceeded",
-          id,
-          {
-            retryAfter,
-          },
-        );
+        throw new AppError("rate_limited", "request rate exceeded", 429);
       }
       if (request.method === "POST" && url.pathname === "/v1/orders") {
         const key = request.headers["idempotency-key"];
         if (typeof key !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(key))
-          return error(
-            response,
-            422,
-            "validation_error",
-            "Idempotency-Key is required and invalid",
-            id,
-          );
-        const result = service.createOrder(
-          db,
+          throw validation("Idempotency-Key is required and invalid");
+        const result = await service.createOrder(
           await readBody(request),
           key,
-          role,
+          identity,
         );
         return send(response, result.replayed ? 200 : 201, result.order, id, {
           location: `/v1/orders/${result.order.orderId}`,
@@ -251,43 +289,29 @@ function createServer({ db = openDatabase(), rateLimit = {} } = {}) {
       }
       if (request.method === "GET" && url.pathname === "/v1/orders") {
         const status = url.searchParams.get("status");
-        if (status && !service.STATUSES.includes(status))
-          return error(
-            response,
-            422,
-            "validation_error",
-            "invalid status filter",
-            id,
-          );
-        const limit = Number(url.searchParams.get("limit") || 25);
-        if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-          return error(response, 422, "validation_error", "invalid limit", id);
-        try {
-          return send(
-            response,
-            200,
-            service.listOrders(
-              db,
-              status,
-              limit,
-              url.searchParams.get("cursor"),
-              role,
-              role === "admin",
-            ),
-            id,
-          );
-        } catch (e) {
-          return error(response, 400, "bad_request", e.message, id);
-        }
+        if (status && !domain.STATUSES.includes(status))
+          throw validation("invalid status filter");
+        const pageLimit = Number(url.searchParams.get("limit") || 25);
+        if (!Number.isInteger(pageLimit) || pageLimit < 1 || pageLimit > 100)
+          throw validation("invalid limit");
+        return send(
+          response,
+          200,
+          await service.listOrders(
+            status,
+            pageLimit,
+            url.searchParams.get("cursor"),
+            identity,
+          ),
+          id,
+        );
       }
       if (request.method === "GET" && url.pathname === "/v1/reports/orders") {
-        if (role !== "admin")
-          return error(
-            response,
-            403,
+        if (!identity.roles.includes("admin"))
+          throw new AppError(
             "forbidden",
             "administrator access is required",
-            id,
+            403,
           );
         const accept = request.headers.accept || "application/json";
         if (
@@ -295,148 +319,222 @@ function createServer({ db = openDatabase(), rateLimit = {} } = {}) {
           !accept.includes("text/csv") &&
           !accept.includes("*/*")
         )
-          return error(
-            response,
-            422,
-            "validation_error",
-            "unsupported Accept header",
-            id,
-          );
-        const status = url.searchParams.get("status");
-        if (status && !service.STATUSES.includes(status))
-          return error(
-            response,
-            422,
-            "validation_error",
-            "invalid status filter",
-            id,
-          );
-        const limit = Number(url.searchParams.get("limit") || 100);
-        if (!Number.isInteger(limit) || limit < 1 || limit > 1000)
-          return error(response, 422, "validation_error", "invalid limit", id);
-        const fromInput = url.searchParams.get("createdFrom");
-        const toInput = url.searchParams.get("createdTo");
-        const from = fromInput ? parseRfc3339(fromInput) : null;
-        const to = toInput ? parseRfc3339(toInput) : null;
+          throw validation("unsupported Accept header");
+        const filters = reportFilters(url);
+        const reportLimit = Number(url.searchParams.get("limit") || 100);
         if (
-          (fromInput && !from) ||
-          (toInput && !to) ||
-          (from && to && from > to)
+          !Number.isInteger(reportLimit) ||
+          reportLimit < 1 ||
+          reportLimit > 1000
         )
-          return error(
-            response,
-            422,
-            "validation_error",
-            "invalid date filter",
-            id,
-          );
-        const result = service.report(db, status, from, to, limit);
+          throw validation("invalid limit");
+        const result = await service.report({ ...filters, limit: reportLimit });
         if (accept.includes("text/csv")) {
           response.writeHead(200, {
             "content-type": "text/csv; charset=utf-8",
             "content-disposition": 'attachment; filename="orders.csv"',
             "x-correlation-id": id,
           });
-          return response.end(service.csvReport(result));
+          return response.end(domain.csvReport(result));
         }
         return send(response, 200, result, id);
+      }
+      if (request.method === "POST" && url.pathname === "/v2/report-jobs") {
+        if (!identity.roles.includes("admin"))
+          throw new AppError(
+            "forbidden",
+            "administrator access is required",
+            403,
+          );
+        const body = await readBody(request);
+        if (
+          Object.keys(body).some(
+            (key) =>
+              !["status", "createdFrom", "createdTo", "format"].includes(key),
+          ) ||
+          !["json", "csv"].includes(body.format || "json")
+        )
+          throw validation("invalid report job request");
+        const params = new URLSearchParams();
+        for (const key of ["status", "createdFrom", "createdTo"])
+          if (body[key]) params.set(key, body[key]);
+        const filters = reportFilters(new URL(`http://local/?${params}`));
+        const job = await service.createReportJob(
+          filters,
+          body.format || "json",
+          identity,
+          { correlationId: id, traceparent: traceContext },
+        );
+        return send(response, 202, job, id, {
+          location: `/v2/report-jobs/${job.jobId}`,
+        });
+      }
+      const downloadMatch = url.pathname.match(
+        /^\/v2\/report-jobs\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/download$/i,
+      );
+      if (request.method === "GET" && downloadMatch) {
+        const job = await service.getReportJob(downloadMatch[1], identity);
+        if (!job) throw new AppError("not_found", "report job not found", 404);
+        if (job.status !== "SUCCEEDED" || !job.result?.artifactId)
+          throw new AppError(
+            "conflict",
+            "report artifact is not available",
+            409,
+          );
+        if (!artifactStore)
+          throw new AppError(
+            "unavailable",
+            "report download is unavailable",
+            503,
+          );
+        const url = await artifactStore.presign(
+          job.result.artifactId,
+          reportDownloadExpiresSeconds,
+        );
+        return send(
+          response,
+          200,
+          {
+            url,
+            expiresAt: new Date(
+              Date.now() + reportDownloadExpiresSeconds * 1000,
+            ).toISOString(),
+          },
+          id,
+          { "cache-control": "no-store" },
+        );
+      }
+      const jobMatch = url.pathname.match(
+        /^\/v2\/report-jobs\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i,
+      );
+      if (request.method === "GET" && jobMatch) {
+        const job = await service.getReportJob(jobMatch[1], identity);
+        if (!job) throw new AppError("not_found", "report job not found", 404);
+        return send(response, 200, job, id);
       }
       const match = url.pathname.match(
         /^\/v1\/orders\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i,
       );
-      if (!match)
-        return error(response, 404, "not_found", "resource not found", id);
-      const order = service.getOrder(db, match[1], role, role === "admin");
-      if (!order)
-        return error(response, 404, "not_found", "order not found", id);
-      if (request.method === "GET") return send(response, 200, order, id);
+      if (!match) throw new AppError("not_found", "resource not found", 404);
+      if (request.method === "GET") {
+        const order = await service.getOrder(match[1], identity);
+        if (!order) throw new AppError("not_found", "order not found", 404);
+        return send(response, 200, order, id);
+      }
       if (request.method === "POST") {
         const body = await readBody(request);
-        if (!body || Object.keys(body).some((key) => key !== "targetStatus"))
-          return error(
-            response,
-            422,
-            "validation_error",
-            "only targetStatus is accepted",
-            id,
-          );
-        if (!service.STATUSES.includes(body.targetStatus))
-          return error(
-            response,
-            422,
-            "validation_error",
-            "invalid target status",
-            id,
-          );
-        try {
-          return send(
-            response,
-            200,
-            service.transition(
-              db,
-              match[1],
-              body.targetStatus,
-              role,
-              role === "admin",
-            ),
-            id,
-          );
-        } catch (e) {
-          return error(response, 409, "conflict", e.message, id);
-        }
-      }
-      return error(response, 404, "not_found", "resource not found", id);
-    } catch (e) {
-      log("request.error", {
-        correlationId: id,
-        method: request.method,
-        path: url.pathname,
-        error: e.message,
-      });
-      const conflict = e.message.includes("idempotency");
-      const validation =
-        /invalid order request|invalid line item|unknown SKU|order total exceeds/.test(
-          e.message,
+        if (
+          !body ||
+          Object.keys(body).some((key) => key !== "targetStatus") ||
+          !domain.STATUSES.includes(body.targetStatus)
+        )
+          throw validation("invalid target status");
+        const order = await service.transition(
+          match[1],
+          body.targetStatus,
+          identity,
         );
-      const status = conflict ? 409 : validation ? 422 : 500;
-      return error(
-        response,
-        status,
-        conflict
-          ? "conflict"
-          : validation
-            ? "validation_error"
-            : "internal_error",
-        conflict || validation ? e.message : "request could not be completed",
-        id,
-      );
-    }
-  });
-  server.on("close", () => {
-    try {
-      db.close();
-    } catch {
-      // The readiness-failure path may already have closed the database.
+        if (!order) throw new AppError("not_found", "order not found", 404);
+        return send(response, 200, order, id);
+      }
+      throw new AppError("not_found", "resource not found", 404);
+    } catch (error) {
+      outcome = error instanceof AppError ? error.code : "internal_error";
+      sendError(response, error, id);
+    } finally {
+      const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+      logger({
+        timestamp: new Date().toISOString(),
+        event: "request.completed",
+        service: "order-reference-service",
+        correlationId: id,
+        ...(trace ? { traceId: trace } : {}),
+        method: request.method,
+        route,
+        status: response.statusCode,
+        durationMs,
+        outcome,
+      });
+      telemetry.endHttp(requestSpan, {
+        method: request.method,
+        route,
+        status: response.statusCode,
+        durationMs,
+        outcome,
+      });
     }
   });
   server.draining = false;
-  server.db = db;
-  return server;
-}
-if (require.main === module) {
-  const server = createServer();
-  const shutdown = () => {
+  server.repository = repository;
+  server.initialization = initialization;
+  server.shutdown = async () => {
     if (server.draining) return;
     server.draining = true;
-    const timer = setTimeout(() => process.exit(1), 10_000);
-    timer.unref();
-    server.close(() => {
-      clearTimeout(timer);
-      process.exit(0);
-    });
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await repository.close();
   };
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
-  server.listen(PORT, "0.0.0.0", () => log("server.started", { port: PORT }));
+  return server;
 }
-module.exports = { createServer, TOKENS: LOCAL_TOKENS, configuredTokens };
+
+if (require.main === module)
+  Promise.resolve()
+    .then(() => {
+      const { readRuntimeConfig } = require("../runtime/config");
+      const {
+        createRepository,
+        createAuthenticator,
+        createArtifactStore,
+      } = require("../runtime/factory");
+      const config = readRuntimeConfig("api");
+      const repository = createRepository(config);
+      const server = createServer({
+        repository,
+        authenticator: createAuthenticator(config),
+        artifactStore:
+          config.environment === "local" ? null : createArtifactStore(config),
+        reportDownloadExpiresSeconds:
+          config.reportDownloadExpiresSeconds || 300,
+        cursorSecret: config.cursorSigningSecret,
+      });
+      const shutdown = () => {
+        const timer = setTimeout(() => process.exit(1), 10_000);
+        timer.unref();
+        server
+          .shutdown()
+          .then(() => {
+            clearTimeout(timer);
+            process.exit(0);
+          })
+          .catch(() => process.exit(1));
+      };
+      process.once("SIGTERM", shutdown);
+      process.once("SIGINT", shutdown);
+      server.listen(PORT, "0.0.0.0", () =>
+        defaultLogger({
+          timestamp: new Date().toISOString(),
+          event: "server.started",
+          service: "order-reference-service",
+          port: PORT,
+        }),
+      );
+      return server;
+    })
+    .catch(() => {
+      defaultLogger({
+        timestamp: new Date().toISOString(),
+        event: "server.start_failed",
+        service: "order-reference-service",
+        errorCode: "configuration_error",
+      });
+      process.exitCode = 1;
+    });
+
+module.exports = {
+  TOKENS: DEFAULT_FIXTURES,
+  configuredTokens,
+  configuredAuthenticator,
+  createServer,
+  normalizedRoute,
+};

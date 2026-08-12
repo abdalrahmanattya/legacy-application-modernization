@@ -1,0 +1,6 @@
+bucket = "REQUIRED-PROD-STATE-BUCKET"
+key = "legacy-application-modernization/prod.tfstate"
+region = "eu-west-1"
+dynamodb_table = "REQUIRED-PROD-LOCK-TABLE"
+encrypt = true
+use_lockfile = true

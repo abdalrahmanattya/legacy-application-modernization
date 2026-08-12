@@ -1,0 +1,12 @@
+name: infrastructure-apply
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apply:
+    if: ${{ false }} # Enable only after OIDC trust, protected environment, and bootstrap review.
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - run: echo 'Apply is intentionally disabled until OIDC, protected-environment, state-backend, and cloud review are separately approved.'

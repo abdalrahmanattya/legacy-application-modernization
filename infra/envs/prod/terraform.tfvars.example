@@ -1,0 +1,8 @@
+environment = "prod"
+name_prefix = "order-reference-prod"
+vpc_cidr = "10.43.0.0/16"
+availability_zones = ["eu-west-1a", "eu-west-1b"]
+container_image_digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+tags = { Project = "legacy-application-modernization", Environment = "prod", ManagedBy = "terraform" }
+# Required operator input; use a real eu-west-1 ACM ARN, never a placeholder.
+# certificate_arn = "arn:aws:acm:eu-west-1:123456789012:certificate/..."

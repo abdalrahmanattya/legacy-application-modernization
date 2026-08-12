@@ -1,13 +1,17 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const files = ["app/baseline", "scripts/baseline", "tests/baseline"].flatMap(
-  (dir) =>
-    fs
-      .readdirSync(dir)
-      .filter((file) => file.endsWith(".js"))
-      .map((file) => path.join(dir, file)),
-);
+function javascriptFiles(directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const target = path.join(directory, entry.name);
+    return entry.isDirectory()
+      ? javascriptFiles(target)
+      : entry.name.endsWith(".js")
+        ? [target]
+        : [];
+  });
+}
+const files = ["app", "scripts", "tests"].flatMap(javascriptFiles);
 let failed = false;
 for (const file of files) {
   const result = spawnSync(process.execPath, ["--check", file], {

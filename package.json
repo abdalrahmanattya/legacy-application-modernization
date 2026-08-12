@@ -9,15 +9,30 @@
   },
   "scripts": {
     "start": "node app/baseline/server.js",
+    "start:publisher": "node app/processes/outbox-publisher.js",
+    "start:worker": "node app/processes/report-worker.js",
     "dev": "node --watch app/baseline/server.js",
     "seed": "node scripts/baseline/seed.js",
     "reset": "node scripts/baseline/reset.js",
-    "test": "node --test tests/baseline/*.test.js",
+    "test": "node --test tests/baseline/*.test.js tests/wave2/*.test.js",
+    "test:postgresql": "node --test tests/wave2/postgresql.integration.test.js",
+    "test:wave3": "node --test tests/wave3/*.test.js",
+    "postgresql:operational-drill": "node scripts/postgresql/wave3-operational-drill.js",
+    "migrate:postgresql": "node scripts/postgresql/migrate.js",
     "lint": "node scripts/baseline/lint.js",
     "format": "node scripts/baseline/format.js",
     "audit": "npm audit --audit-level=high"
   },
   "devDependencies": {
+    "@opentelemetry/sdk-metrics": "2.10.0",
+    "@opentelemetry/sdk-trace-base": "2.10.0",
     "prettier": "3.6.2"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1108.0",
+    "@aws-sdk/client-sqs": "3.1108.0",
+    "@aws-sdk/s3-request-presigner": "3.1108.0",
+    "@opentelemetry/api": "1.9.0",
+    "pg": "8.23.0"
   }
 }

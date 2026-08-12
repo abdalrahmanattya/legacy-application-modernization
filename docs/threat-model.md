@@ -2,9 +2,10 @@
 
 Wave 1 adds a local container boundary: non-root execution, read-only root
 filesystem, writable `/data` volume only, dropped capabilities,
-`no-new-privileges`, bounded resources, pinned Node 24 base image, and
-production token fail-fast validation. These controls are locally reviewed;
-hosted image scanning and AWS controls remain unverified.
+`no-new-privileges`, bounded resources, and a pinned Node 24 base image. Wave 2
+adds strict production configuration for PostgreSQL/TLS, JWT identity, and
+report-process modes. These controls are locally reviewed; hosted image
+scanning and AWS controls remain unverified.
 
 ## Scope and assumptions
 
@@ -19,6 +20,15 @@ The threat model covers the HTTP boundary, local persistence, reports, logs,
 build inputs, and the planned AWS migration seams. It does not claim that an
 AWS control is deployed or effective.
 
+Wave 2 adds target-compatible PostgreSQL persistence and Cognito-compatible
+JWT validation without claiming their AWS dependencies. Idempotency keys are
+hashed before persistence, cursors are HMAC-signed and scope-bound, and report
+jobs use an atomic database outbox. SQS/S3 production adapters and separate
+publisher/worker modes are executable and tested with injected SDK clients,
+without claiming AWS behavior. Local fixtures, SQLite, the in-memory queue, and
+the in-memory artifact store remain test adapters rather than shared-environment
+controls.
+
 ## Assets and trust boundaries
 
 | Asset                                 | Classification                                  | Boundary                                 |
@@ -26,7 +36,9 @@ AWS control is deployed or effective.
 | Synthetic catalog and price snapshots | Public/demo                                     | Seed file to service/database            |
 | Opaque customer reference             | Confidential caller data; caller-prohibited PII | Authenticated request to database/report |
 | Order state and totals                | Confidential business data                      | Authenticated API to persistence         |
-| Bearer fixture configuration          | Secret in local runtime                         | Environment to authentication middleware |
+| Bearer fixture configuration          | Disposable local-only value                     | Environment to authentication middleware |
+| PostgreSQL/cursor secrets             | Production secret                               | Secrets Manager/task to application       |
+| Report artifact                       | Confidential business data                      | Worker to private S3/download signer       |
 | Correlation IDs and logs              | Operational metadata                            | Request boundary to local log sink       |
 | Build/dependency artifacts            | Integrity-sensitive                             | Developer/CI to runtime image            |
 
@@ -46,6 +58,11 @@ AWS control is deployed or effective.
 | Database loss/corruption         | Readiness signal and documented local recovery boundary                                                            | SQLite/local disk has no HA or durable backup by default                              |
 | Supply-chain compromise          | Node 24 LTS decision, lockfile, scan and review gates                                                              | CI signing/provenance is future work                                                  |
 | Cloud credential misuse          | No AWS credentials locally; future OIDC and least privilege                                                        | No cloud trust behavior has been verified                                             |
+| JWT substitution/replay          | RS256 only; issuer, client, token_use, exp/nbf and key ID validation; immutable issuer+sub ownership               | Cognito issuance/revocation behavior is not cloud-tested                              |
+| Cursor tampering/cross-scope use | HMAC signature bound to owner/admin scope and status filter                                                        | Signing-secret rotation policy remains future work                                    |
+| Duplicate queue delivery         | Durable job state, specific-job conditional claim, renewable DB/SQS leases, completed delivery acknowledgement    | SQS visibility/DLQ behavior remains cloud-only evidence                               |
+| Queue/report data exfiltration   | Message field allowlist; private S3 prefix; checksum; scope/completion check before bounded presign                | IAM, bucket/KMS policy, lifecycle and URL behavior remain cloud-only evidence          |
+| Database interception            | Production requires verified TLS and injected CA; disabling verification is rejected                             | RDS certificate rotation and runtime mount remain operational responsibilities         |
 | SSRF/external side effects       | No destination URL or external fetch capability exists                                                             | Future integrations must preserve this boundary                                       |
 
 ## Abuse and privacy rules

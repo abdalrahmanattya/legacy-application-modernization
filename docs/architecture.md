@@ -25,6 +25,23 @@ Account, identity, network, data, and recovery boundaries will be detailed
 before infrastructure code is introduced. The target must remain runnable in
 a credential-free local mode.
 
+Wave 2 infrastructure is plan-only. The Terraform scaffold is separated into
+nonprod/prod boundaries with eu-west-1 as the target region, a NAT-free private
+network design, encrypted isolated data, immutable image promotion, and
+credential-free PR validation. CloudFront VPC origins/private ALB constraints,
+TLS/domain inputs, endpoint routing, Cognito, OIDC trust, and AWS behavior are
+designed but not cloud-tested.
+
+The Wave 2 application implements async repository and identity ports with
+SQLite/local-fixture defaults and PostgreSQL/Cognito-compatible target
+adapters. PostgreSQL migrations run separately from application startup.
+Versioned `/v2` report jobs use a transactional outbox and queue/artifact ports
+while `/v1` remains unchanged. Separate production commands publish to SQS and
+process jobs into private, checksummed S3 artifacts; the API authorizes a
+complete job before issuing a bounded presigned download. These adapters are
+executable and locally tested with injected SDK clients; RDS, Cognito, SQS,
+S3/KMS, ECS, and telemetry exporters are not cloud-evidenced.
+
 ## Migration waves
 
 - **Wave 0:** establish baseline behaviour, threat model, SLO candidates, and

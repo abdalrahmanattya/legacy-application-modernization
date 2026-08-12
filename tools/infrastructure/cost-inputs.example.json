@@ -1,0 +1,22 @@
+{
+  "currency": "USD",
+  "model_date": "2026-08-12",
+  "assumptions": {
+    "hours_per_month": 730,
+    "ecs_task_hourly": 0.05,
+    "aurora_acu_hourly": 0.12,
+    "alb_hourly": 0.025,
+    "waf_monthly": 8,
+    "cloudwatch_monthly": 15,
+    "s3_sqs_ecr_monthly": 5,
+    "nat_gateway_hourly": 0.045,
+    "nat_processing_monthly": 10,
+    "endpoint_hourly_each": 0.01
+  },
+  "scenarios": {
+    "nonprod_idle_nat_free": { "tasks": 1, "aurora_acu": 0.5, "nat_gateways": 0, "interface_endpoints": 5 },
+    "prod_idle_nat_free": { "tasks": 2, "aurora_acu": 0.5, "nat_gateways": 0, "interface_endpoints": 5 },
+    "prod_load_nat_free": { "tasks": 4, "aurora_acu": 2, "nat_gateways": 0, "interface_endpoints": 5 },
+    "prod_idle_nat": { "tasks": 2, "aurora_acu": 0.5, "nat_gateways": 2, "interface_endpoints": 0 }
+  }
+}

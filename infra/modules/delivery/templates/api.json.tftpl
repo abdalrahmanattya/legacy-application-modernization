@@ -1,0 +1,15 @@
+[
+  {
+    "name": "app",
+    "image": "${image}",
+    "essential": true,
+    "stopTimeout": 40,
+    "readonlyRootFilesystem": true,
+    "user": "1000",
+    "portMappings": [{"containerPort": 3000}],
+    "environment": ${environment},
+    "secrets": ${secrets},
+    "logConfiguration": {"logDriver": "awslogs", "options": ${log_options}},
+    "healthCheck": {"command": ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""], "interval": 30, "timeout": 5, "retries": 3, "startPeriod": 30}
+  }
+]

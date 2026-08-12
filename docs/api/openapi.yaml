@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Privacy-Minimized Order Reference Service
-  version: 0.1.0
+  version: 0.2.0
   description: >-
     Original local-first contract for a seeded synthetic catalog and an
     order-reference workflow. No customer-profile fields are modeled. Callers
@@ -12,158 +12,183 @@ servers:
     description: Local baseline
 tags:
   - name: service
+    description: Liveness and dependency readiness.
   - name: catalog
+    description: Synthetic demonstration catalog.
   - name: orders
+    description: Principal-scoped order lifecycle.
   - name: reports
+    description: Bounded synchronous version-one reporting.
+  - name: report-jobs
+    description: Durable asynchronous version-two reporting.
 paths:
   /healthz:
     get:
+      summary: Report process liveness
       tags: [service]
       operationId: health
       security: []
       responses:
-        '200':
+        "200":
           description: Process is serving requests.
-          headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
+          headers:
+            { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
           content:
-            application/json: { schema: { $ref: '#/components/schemas/HealthResponse' } }
-        '503': { $ref: '#/components/responses/Unavailable' }
+            application/json:
+              { schema: { $ref: "#/components/schemas/HealthResponse" } }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /readyz:
     get:
+      summary: Report dependency and schema readiness
       tags: [service]
       operationId: readiness
       security: []
       responses:
-        '200':
+        "200":
           description: Storage and required local dependencies are ready.
-          headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
+          headers:
+            { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
           content:
-            application/json: { schema: { $ref: '#/components/schemas/ReadyResponse' } }
-        '503': { $ref: '#/components/responses/Unavailable' }
+            application/json:
+              { schema: { $ref: "#/components/schemas/ReadyResponse" } }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /v1/products:
     get:
+      summary: List synthetic products
       tags: [catalog]
       operationId: listProducts
       security: []
       responses:
-        '200':
+        "200":
           description: Seeded synthetic USD products.
-          headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
+          headers:
+            { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/Product' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+                items: { $ref: "#/components/schemas/Product" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /v1/orders:
     post:
+      summary: Create an idempotent order
       tags: [orders]
       operationId: createOrder
       security: [{ bearerAuth: [] }]
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CorrelationId"
       requestBody:
         required: true
         content:
-          application/json: { schema: { $ref: '#/components/schemas/CreateOrderRequest' } }
+          application/json:
+            { schema: { $ref: "#/components/schemas/CreateOrderRequest" } }
       responses:
-        '201':
+        "201":
           description: Order created.
           headers:
             Location: { schema: { type: string, format: uri-reference } }
-            X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' }
+            X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" }
           content:
-            application/json: { schema: { $ref: '#/components/schemas/Order' } }
-        '200':
+            application/json: { schema: { $ref: "#/components/schemas/Order" } }
+        "200":
           description: Identical idempotent replay of the original order.
           headers:
             Location: { schema: { type: string, format: uri-reference } }
-            X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' }
-            Idempotency-Replayed: { schema: { type: string, const: 'true' } }
+            X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" }
+            Idempotency-Replayed: { schema: { type: string, const: "true" } }
           content:
-            application/json: { schema: { $ref: '#/components/schemas/Order' } }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '422': { $ref: '#/components/responses/ValidationError' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '500': { $ref: '#/components/responses/InternalError' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+            application/json: { schema: { $ref: "#/components/schemas/Order" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
     get:
+      summary: List principal-scoped orders
       tags: [orders]
       operationId: listOrders
       security: [{ bearerAuth: [] }]
       parameters:
-        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: "#/components/parameters/CorrelationId"
         - in: query
           name: status
-          schema: { $ref: '#/components/schemas/OrderStatus' }
+          schema: { $ref: "#/components/schemas/OrderStatus" }
         - in: query
           name: limit
           schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
         - in: query
           name: cursor
-          schema: { type: string, maxLength: 256 }
+          schema: { type: string, maxLength: 1024 }
       responses:
-        '200':
+        "200":
           description: Principal-scoped page ordered by createdAt DESC then orderId DESC.
-          headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
+          headers:
+            { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
           content:
-            application/json: { schema: { $ref: '#/components/schemas/OrderPage' } }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '422': { $ref: '#/components/responses/ValidationError' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '500': { $ref: '#/components/responses/InternalError' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+            application/json:
+              { schema: { $ref: "#/components/schemas/OrderPage" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /v1/orders/{orderId}:
     parameters:
-      - $ref: '#/components/parameters/OrderId'
-      - $ref: '#/components/parameters/CorrelationId'
+      - $ref: "#/components/parameters/OrderId"
+      - $ref: "#/components/parameters/CorrelationId"
     get:
+      summary: Retrieve a principal-scoped order
       tags: [orders]
       operationId: getOrder
       security: [{ bearerAuth: [] }]
       responses:
-        '200':
+        "200":
           description: Order details; ownerPrincipal is never exposed.
-          headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
+          headers:
+            { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
           content:
-            application/json: { schema: { $ref: '#/components/schemas/Order' } }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '500': { $ref: '#/components/responses/InternalError' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+            application/json: { schema: { $ref: "#/components/schemas/Order" } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
     post:
+      summary: Transition an order state
       tags: [orders]
       operationId: transitionOrder
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
         content:
-          application/json: { schema: { $ref: '#/components/schemas/TransitionRequest' } }
+          application/json:
+            { schema: { $ref: "#/components/schemas/TransitionRequest" } }
       responses:
-        '200':
+        "200":
           description: Order transitioned.
-          headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
+          headers:
+            { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
           content:
-            application/json: { schema: { $ref: '#/components/schemas/Order' } }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '422': { $ref: '#/components/responses/ValidationError' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '500': { $ref: '#/components/responses/InternalError' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+            application/json: { schema: { $ref: "#/components/schemas/Order" } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /v1/reports/orders:
     get:
+      summary: Export a bounded synchronous order report
       tags: [reports]
       operationId: exportOrders
       security: [{ bearerAuth: [] }]
       parameters:
-        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: "#/components/parameters/CorrelationId"
         - in: header
           name: Accept
           required: false
@@ -173,7 +198,7 @@ paths:
             default: application/json
         - in: query
           name: status
-          schema: { $ref: '#/components/schemas/OrderStatus' }
+          schema: { $ref: "#/components/schemas/OrderStatus" }
         - in: query
           name: createdFrom
           schema: { type: string, format: date-time }
@@ -184,27 +209,100 @@ paths:
           name: limit
           schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
       responses:
-        '200':
+        "200":
           description: Admin-only synchronous aggregate report; customerReference is omitted.
           headers:
-            X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' }
+            X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" }
             Content-Disposition: { schema: { type: string } }
           content:
-            application/json: { schema: { $ref: '#/components/schemas/OrderReport' } }
+            application/json:
+              { schema: { $ref: "#/components/schemas/OrderReport" } }
             text/csv: { schema: { type: string } }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '422': { $ref: '#/components/responses/ValidationError' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '500': { $ref: '#/components/responses/InternalError' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /v2/report-jobs:
+    post:
+      summary: Accept an asynchronous report job
+      tags: [report-jobs]
+      operationId: createReportJob
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            { schema: { $ref: "#/components/schemas/CreateReportJobRequest" } }
+      responses:
+        "202":
+          description: Durable report job and outbox event accepted atomically.
+          headers:
+            Location: { schema: { type: string, format: uri-reference } }
+            X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" }
+          content:
+            application/json:
+              { schema: { $ref: "#/components/schemas/ReportJob" } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /v2/report-jobs/{jobId}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+      - $ref: "#/components/parameters/CorrelationId"
+    get:
+      summary: Poll an asynchronous report job
+      tags: [report-jobs]
+      operationId: getReportJob
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Principal-scoped durable job state.
+          headers:
+            { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
+          content:
+            application/json:
+              { schema: { $ref: "#/components/schemas/ReportJob" } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /v2/report-jobs/{jobId}/download:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+      - $ref: "#/components/parameters/CorrelationId"
+    get:
+      summary: Create a short-lived private report download
+      tags: [report-jobs]
+      operationId: downloadReportJob
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Owner/admin-scoped short-lived presigned S3 download.
+          headers:
+            X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" }
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              { schema: { $ref: "#/components/schemas/ReportDownload" } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: opaque-local-fixture
-      description: Local fixtures are operator-a, operator-b, and admin; the service issues no tokens.
+      bearerFormat: JWT-or-local-fixture
+      description: Local fixtures or a validated Cognito-compatible access-token JWT whose configured operator/admin group authorizes access; the service issues no tokens.
   parameters:
     CorrelationId:
       in: header
@@ -212,7 +310,7 @@ components:
       required: false
       schema:
         type: string
-        pattern: '^[A-Za-z0-9._:-]{1,64}$'
+        pattern: "^[A-Za-z0-9._:-]{1,64}$"
       description: Invalid or overlong values are replaced with a generated opaque identifier.
     IdempotencyKey:
       in: header
@@ -220,7 +318,7 @@ components:
       required: true
       schema:
         type: string
-        pattern: '^[A-Za-z0-9._:-]{1,128}$'
+        pattern: "^[A-Za-z0-9._:-]{1,128}$"
       description: Scoped to principal, endpoint, and key; the fingerprint is stored, never the response or key in logs.
     OrderId:
       in: path
@@ -229,7 +327,15 @@ components:
       schema:
         type: string
         format: uuid
-        pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    JobId:
+      in: path
+      name: jobId
+      required: true
+      schema:
+        type: string
+        format: uuid
+        pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
   headers:
     CorrelationId:
       description: Request correlation identifier returned on every response.
@@ -255,9 +361,13 @@ components:
       type: object
       required: [sku, name, price]
       properties:
-        sku: { type: string, pattern: '^DEMO-[A-Z0-9-]{3,28}$' }
-        name: { type: string, minLength: 1, maxLength: 120, description: Synthetic product name, not a customer name. }
-        price: { $ref: '#/components/schemas/Money' }
+        sku: { type: string, pattern: "^DEMO-[A-Z0-9-]{3,28}$" }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: "Synthetic product name, not a customer name."
+        price: { $ref: "#/components/schemas/Money" }
     CreateOrderRequest:
       type: object
       additionalProperties: false
@@ -267,19 +377,19 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9._:-]+$'
+          pattern: "^[A-Za-z0-9._:-]+$"
           description: Opaque caller reference; callers must not submit PII and semantic PII detection is not claimed.
         lineItems:
           type: array
           minItems: 1
           maxItems: 50
-          items: { $ref: '#/components/schemas/LineItemRequest' }
+          items: { $ref: "#/components/schemas/LineItemRequest" }
     LineItemRequest:
       type: object
       additionalProperties: false
       required: [sku, quantity]
       properties:
-        sku: { type: string, pattern: '^DEMO-[A-Z0-9-]{3,28}$' }
+        sku: { type: string, pattern: "^DEMO-[A-Z0-9-]{3,28}$" }
         quantity: { type: integer, minimum: 1, maximum: 100 }
     OrderStatus:
       type: string
@@ -288,23 +398,32 @@ components:
       type: object
       required: [sku, name, quantity, unitPrice, lineTotal]
       properties:
-        sku: { type: string, pattern: '^DEMO-[A-Z0-9-]{3,28}$' }
+        sku: { type: string, pattern: "^DEMO-[A-Z0-9-]{3,28}$" }
         name: { type: string, minLength: 1, maxLength: 120 }
         quantity: { type: integer, minimum: 1, maximum: 100 }
-        unitPrice: { $ref: '#/components/schemas/Money' }
-        lineTotal: { $ref: '#/components/schemas/Money' }
+        unitPrice: { $ref: "#/components/schemas/Money" }
+        lineTotal: { $ref: "#/components/schemas/Money" }
     Order:
       type: object
-      required: [orderId, customerReference, status, lineItems, total, createdAt, updatedAt]
+      required:
+        [
+          orderId,
+          customerReference,
+          status,
+          lineItems,
+          total,
+          createdAt,
+          updatedAt,
+        ]
       properties:
         orderId: { type: string, format: uuid }
         customerReference: { type: string, minLength: 1, maxLength: 128 }
-        status: { $ref: '#/components/schemas/OrderStatus' }
+        status: { $ref: "#/components/schemas/OrderStatus" }
         lineItems:
           type: array
           minItems: 1
-          items: { $ref: '#/components/schemas/OrderLine' }
-        total: { $ref: '#/components/schemas/Money' }
+          items: { $ref: "#/components/schemas/OrderLine" }
+        total: { $ref: "#/components/schemas/Money" }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     OrderPage:
@@ -313,21 +432,21 @@ components:
       properties:
         items:
           type: array
-          items: { $ref: '#/components/schemas/Order' }
-        nextCursor: { type: [string, 'null'], maxLength: 256 }
+          items: { $ref: "#/components/schemas/Order" }
+        nextCursor: { type: [string, "null"], maxLength: 1024 }
     TransitionRequest:
       type: object
       additionalProperties: false
       required: [targetStatus]
       properties:
-        targetStatus: { $ref: '#/components/schemas/OrderStatus' }
+        targetStatus: { $ref: "#/components/schemas/OrderStatus" }
     OrderReportItem:
       type: object
       required: [orderId, status, total, createdAt, updatedAt]
       properties:
         orderId: { type: string, format: uuid }
-        status: { $ref: '#/components/schemas/OrderStatus' }
-        total: { $ref: '#/components/schemas/Money' }
+        status: { $ref: "#/components/schemas/OrderStatus" }
+        total: { $ref: "#/components/schemas/Money" }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     OrderReport:
@@ -339,51 +458,100 @@ components:
         items:
           type: array
           maxItems: 1000
-          items: { $ref: '#/components/schemas/OrderReportItem' }
+          items: { $ref: "#/components/schemas/OrderReportItem" }
+    CreateReportJobRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        status: { $ref: "#/components/schemas/OrderStatus" }
+        createdFrom: { type: string, format: date-time }
+        createdTo: { type: string, format: date-time }
+        format: { type: string, enum: [json, csv], default: json }
+    ReportJob:
+      type: object
+      required: [jobId, status, filters, format, createdAt, updatedAt]
+      properties:
+        jobId: { type: string, format: uuid }
+        status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED] }
+        filters: { type: object }
+        format: { type: string, enum: [json, csv] }
+        result:
+          type: [object, "null"]
+          description: Private artifact identifier, checksum, content type, and size; never a public URL.
+        error: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ReportDownload:
+      type: object
+      additionalProperties: false
+      required: [url, expiresAt]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Short-lived application-generated presigned S3 URL.
+        expiresAt: { type: string, format: date-time }
     Error:
       type: object
       required: [error, message, correlationId]
       properties:
-        error: { type: string, pattern: '^[a-z][a-z0-9_]{2,63}$' }
+        error: { type: string, pattern: "^[a-z][a-z0-9_]{2,63}$" }
         message: { type: string, maxLength: 300 }
         correlationId: { type: string, maxLength: 64 }
         details: { type: object, additionalProperties: false }
   responses:
     BadRequest:
       description: Malformed request or invalid opaque cursor.
-      headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      headers:
+        { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
+      content:
+        { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     Unauthenticated:
       description: Missing or invalid bearer fixture.
-      headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      headers:
+        { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
+      content:
+        { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     Forbidden:
       description: Authenticated identity is not permitted for an admin-only route.
-      headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      headers:
+        { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
+      content:
+        { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     NotFound:
       description: Unknown or out-of-scope order; existence is intentionally indistinguishable.
-      headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      headers:
+        { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
+      content:
+        { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     Conflict:
       description: Idempotency fingerprint conflict or invalid state transition.
-      headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      headers:
+        { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
+      content:
+        { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     ValidationError:
       description: Schema, money, date-filter, or report-limit validation failed.
-      headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      headers:
+        { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
+      content:
+        { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     RateLimited:
       description: Candidate local abuse-control limit exceeded; not a production SLO.
       headers:
-        X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' }
+        X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" }
         Retry-After: { schema: { type: integer } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      content:
+        { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     InternalError:
       description: Unexpected internal failure without sensitive details.
-      headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      headers:
+        { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
+      content:
+        { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     Unavailable:
       description: Service or required local storage is unavailable.
-      headers: { X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      headers:
+        { X-Correlation-ID: { $ref: "#/components/headers/CorrelationId" } }
+      content:
+        { application/json: { schema: { $ref: "#/components/schemas/Error" } } }

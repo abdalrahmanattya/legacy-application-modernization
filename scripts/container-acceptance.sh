@@ -10,6 +10,7 @@ port="${WAVE1_PORT:-18080}"
 operator='local-operator-a-token'
 other='local-operator-b-token'
 admin='local-admin-token'
+cursor_secret='container-acceptance-cursor-signing-secret'
 evidence_dir="${WAVE1_EVIDENCE_DIR:-wave1-evidence}"
 mkdir -p "$evidence_dir"
 cleanup() {
@@ -26,6 +27,7 @@ start_service() {
     --cap-drop ALL --security-opt no-new-privileges:true -p "$port:3000" \
     -e ENVIRONMENT=local -e ORDER_DB_PATH=/data/orders.sqlite \
     -e OPERATOR_A_TOKEN="$operator" -e OPERATOR_B_TOKEN="$other" -e ADMIN_TOKEN="$admin" \
+    -e CURSOR_SIGNING_SECRET="$cursor_secret" \
     -v "$volume:/data" "$image" >/dev/null
 }
 wait_ready() {
@@ -60,13 +62,13 @@ wait_ready
 curl --fail --silent "http://127.0.0.1:${port}/v1/orders/${order_id}" -H "Authorization: Bearer ${operator}" | grep -q 'container-persist'
 docker rm -f "$name" >/dev/null
 
-if docker run --rm --read-only -e ENVIRONMENT=container --entrypoint node "$image" -e "require('./app/baseline/server').configuredTokens()" >/dev/null 2>&1; then exit 1; fi
-if docker run --rm --read-only -e ENVIRONMENT=container -e OPERATOR_A_TOKEN=' x ' -e OPERATOR_B_TOKEN=x -e ADMIN_TOKEN=y --entrypoint node "$image" -e "require('./app/baseline/server').configuredTokens()" >/dev/null 2>&1; then exit 1; fi
-if docker run --rm --read-only -e ENVIRONMENT=container -e OPERATOR_A_TOKEN=x -e OPERATOR_B_TOKEN=' x ' -e ADMIN_TOKEN=y --entrypoint node "$image" -e "require('./app/baseline/server').configuredTokens()" >/dev/null 2>&1; then exit 1; fi
+if docker run --rm --read-only -e ENVIRONMENT=production --entrypoint node "$image" -e "require('./app/runtime/config').readRuntimeConfig('api')" >/dev/null 2>&1; then exit 1; fi
+if docker run --rm --read-only -e ENVIRONMENT=production -e OPERATOR_A_TOKEN=a -e OPERATOR_B_TOKEN=b -e ADMIN_TOKEN=c --entrypoint node "$image" -e "require('./app/runtime/config').readRuntimeConfig('api')" >/dev/null 2>&1; then exit 1; fi
 
 docker run -d --name "$signal_name" --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
-  --cap-drop ALL --security-opt no-new-privileges:true -e ENVIRONMENT=container \
-  -e OPERATOR_A_TOKEN=a -e OPERATOR_B_TOKEN=b -e ADMIN_TOKEN=c -v "${volume}:/data" "$image" >/dev/null
+  --cap-drop ALL --security-opt no-new-privileges:true -e ENVIRONMENT=local \
+  -e OPERATOR_A_TOKEN=a -e OPERATOR_B_TOKEN=b -e ADMIN_TOKEN=c \
+  -e CURSOR_SIGNING_SECRET="$cursor_secret" -v "${volume}:/data" "$image" >/dev/null
 for attempt in {1..20}; do
   if docker exec "$signal_name" node -e "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then break; fi
   [[ "$attempt" == 20 ]] && exit 1
