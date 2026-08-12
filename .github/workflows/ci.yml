@@ -52,12 +52,12 @@ jobs:
           format: cyclonedx
           output: sbom.json
           exit-code: 0
-      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
         with:
           name: order-reference-service-sbom
           path: sbom.json
           if-no-files-found: error
-      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
         with:
           name: wave1-runtime-evidence
           path: wave1-evidence/
@@ -104,7 +104,7 @@ jobs:
         run: timeout --signal=TERM --kill-after=10s 5m node scripts/postgresql/wave3-operational-drill.js
       - name: Upload Wave3 secret-free evidence
         if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
         with:
           name: wave3-postgresql-evidence
           path: .evidence-results/
