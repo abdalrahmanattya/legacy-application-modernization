@@ -202,12 +202,13 @@ resource "aws_security_group" "db" {
   tags = var.tags
 }
 resource "aws_lb" "private" {
-  name               = substr("${var.name_prefix}-alb", 0, 32)
-  internal           = true
-  load_balancer_type = "application"
-  subnets            = var.private_subnet_ids
-  security_groups    = [aws_security_group.alb.id]
-  tags               = var.tags
+  name                       = substr("${var.name_prefix}-alb", 0, 32)
+  internal                   = true
+  load_balancer_type         = "application"
+  drop_invalid_header_fields = true
+  subnets                    = var.private_subnet_ids
+  security_groups            = [aws_security_group.alb.id]
+  tags                       = var.tags
 }
 resource "aws_lb_target_group" "app" {
   name        = substr("${var.name_prefix}-tg", 0, 32)

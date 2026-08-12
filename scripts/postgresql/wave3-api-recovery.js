@@ -3,16 +3,18 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "../..");
-const name = `wave3-pg-${process.pid}`;
-const volume = `wave3-volume-${process.pid}`;
+const unique = `${process.pid}-${Date.now()}`;
+const name = `wave3-pg-${unique}`;
+const volume = `wave3-volume-${unique}`;
 const output =
   process.env.WAVE3_EVIDENCE_OUTPUT ||
   ".evidence-results/wave3-api-recovery.json";
 const token = "wave3-local-token";
-const dbPort = 35439;
-const portA = 34101;
-const portB = 34102;
-const dbUrl = `postgres://postgres:wave3-local-only@127.0.0.1:${dbPort}/orders`;
+let dbPort = Number(process.env.WAVE3_DB_PORT || 0);
+const basePort = Number(process.env.WAVE3_BASE_PORT || 34101);
+const portA = basePort;
+const portB = basePort + 1;
+let dbUrl;
 const children = new Map();
 const evidence = { schema: "wave3.api-recovery.v1", pass: false, errors: [] };
 
@@ -106,11 +108,15 @@ async function main() {
     "-e",
     "POSTGRES_DB=orders",
     "-p",
-    `${dbPort}:5432`,
+    `127.0.0.1:${dbPort}:5432`,
     "-v",
     `${volume}:/var/lib/postgresql/data`,
     "postgres:17",
   ]);
+  dbPort = Number(run("docker", ["port", name, "5432/tcp"]).match(/:(\d+)\s*$/m)?.[1]);
+  if (!dbPort) throw new Error("could not determine disposable PostgreSQL port");
+  dbUrl = `postgres://postgres:wave3-local-only@127.0.0.1:${dbPort}/orders`;
+  let dbReady = false;
   for (let i = 0; i < 60; i++) {
     try {
       run("docker", [
@@ -122,11 +128,13 @@ async function main() {
         "-d",
         "orders",
       ]);
+      dbReady = true;
       break;
     } catch {
       await new Promise((r) => setTimeout(r, 500));
     }
   }
+  if (!dbReady) throw new Error("PostgreSQL container did not become ready within 30 seconds");
   const migrateCode =
     "require('./scripts/postgresql/migrate').migrate(require('./app/postgresql').createPool({connectionString: process.env.DATABASE_URL})).then(()=>process.exit()).catch((e)=>{console.error(e.message);process.exit(1)})";
   let migrated = false;
@@ -143,23 +151,23 @@ async function main() {
   }
   if (!migrated)
     throw new Error("PostgreSQL migration did not become available");
-  const apiA = startApi(34101);
-  const apiB = startApi(34102);
+  const apiA = startApi(portA);
+  const apiB = startApi(portB);
   evidence.apiReady =
-    (await waitFor("http://127.0.0.1:34101/readyz", 200)) &&
-    (await waitFor("http://127.0.0.1:34102/readyz", 200));
+    (await waitFor(`http://127.0.0.1:${portA}/readyz`, 200)) &&
+    (await waitFor(`http://127.0.0.1:${portB}/readyz`, 200));
   const latencies = [];
   const results = await Promise.all(
     Array.from({ length: 30 }, (_, i) =>
-      request(i % 2 ? 34102 : 34101, `load-${i}`).then(async (r) => {
+      request(i % 2 ? portB : portA, `load-${i}`).then(async (r) => {
         latencies.push(r.latencyMs);
         return r.response.status;
       }),
     ),
   );
   const duplicate = await Promise.all([
-    request(34101, "same-key"),
-    request(34102, "same-key"),
+    request(portA, "same-key"),
+    request(portB, "same-key"),
   ]);
   evidence.workload = {
     requests: results.length,
@@ -175,17 +183,17 @@ async function main() {
   apiA.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 400));
   evidence.apiKillRecovery =
-    (await waitFor("http://127.0.0.1:34102/readyz", 200)) &&
-    (await request(34102, "after-api-kill")).response.status === 201;
-  startApi(34101);
+    (await waitFor(`http://127.0.0.1:${portB}/readyz`, 200)) &&
+    (await request(portB, "after-api-kill")).response.status === 201;
+  startApi(portA);
   evidence.apiRestartReady = await waitFor(
-    "http://127.0.0.1:34101/readyz",
+    `http://127.0.0.1:${portA}/readyz`,
     200,
   );
   run("docker", ["stop", name]);
   evidence.dbOutage503 =
-    (await waitFor("http://127.0.0.1:34101/readyz", 503, 10000)) ||
-    (await waitFor("http://127.0.0.1:34102/readyz", 503, 10000));
+    (await waitFor(`http://127.0.0.1:${portA}/readyz`, 503, 10000)) ||
+    (await waitFor(`http://127.0.0.1:${portB}/readyz`, 503, 10000));
   run("docker", ["start", name]);
   for (let i = 0; i < 60; i++) {
     try {
@@ -204,10 +212,10 @@ async function main() {
     }
   }
   evidence.dbRestartRecovery =
-    (await waitFor("http://127.0.0.1:34101/readyz", 200, 30000)) &&
-    (await waitFor("http://127.0.0.1:34102/readyz", 200, 30000));
+    (await waitFor(`http://127.0.0.1:${portA}/readyz`, 200, 30000)) &&
+    (await waitFor(`http://127.0.0.1:${portB}/readyz`, 200, 30000));
   evidence.postRecoveryCreate =
-    (await request(34101, "after-db-restart")).response.status === 201;
+    (await request(portA, "after-db-restart")).response.status === 201;
   evidence.pass =
     evidence.apiReady &&
     evidence.workload.errors === 0 &&
