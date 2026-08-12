@@ -113,8 +113,11 @@ async function main() {
     `${volume}:/var/lib/postgresql/data`,
     "postgres:17",
   ]);
-  dbPort = Number(run("docker", ["port", name, "5432/tcp"]).match(/:(\d+)\s*$/m)?.[1]);
-  if (!dbPort) throw new Error("could not determine disposable PostgreSQL port");
+  dbPort = Number(
+    run("docker", ["port", name, "5432/tcp"]).match(/:(\d+)\s*$/m)?.[1],
+  );
+  if (!dbPort)
+    throw new Error("could not determine disposable PostgreSQL port");
   dbUrl = `postgres://postgres:wave3-local-only@127.0.0.1:${dbPort}/orders`;
   let dbReady = false;
   for (let i = 0; i < 60; i++) {
@@ -134,7 +137,10 @@ async function main() {
       await new Promise((r) => setTimeout(r, 500));
     }
   }
-  if (!dbReady) throw new Error("PostgreSQL container did not become ready within 30 seconds");
+  if (!dbReady)
+    throw new Error(
+      "PostgreSQL container did not become ready within 30 seconds",
+    );
   const migrateCode =
     "require('./scripts/postgresql/migrate').migrate(require('./app/postgresql').createPool({connectionString: process.env.DATABASE_URL})).then(()=>process.exit()).catch((e)=>{console.error(e.message);process.exit(1)})";
   let migrated = false;
