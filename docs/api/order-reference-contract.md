@@ -6,16 +6,19 @@ modernization.
 
 ## Route groups
 
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| `GET` | `/healthz` | None | Process liveness; no dependency check |
-| `GET` | `/readyz` | None | Storage readiness; `503` when unavailable |
-| `GET` | `/v1/products` | None | Read the seeded synthetic catalog |
-| `POST` | `/v1/orders` | Operator/admin bearer | Create an order; requires `Idempotency-Key` |
-| `GET` | `/v1/orders` | Operator/admin bearer | Principal-scoped cursor-based order list |
-| `GET` | `/v1/orders/{orderId}` | Operator/admin bearer | Retrieve an in-scope order |
-| `POST` | `/v1/orders/{orderId}` | Operator/admin bearer | Apply one allowed state transition |
-| `GET` | `/v1/reports/orders` | Admin bearer only | Bounded synchronous aggregate JSON/CSV export |
+| Method | Path                      | Auth                  | Purpose                                       |
+| ------ | ------------------------- | --------------------- | --------------------------------------------- |
+| `GET`  | `/healthz`                | None                  | Process liveness; no dependency check         |
+| `GET`  | `/readyz`                 | None                  | Storage readiness; `503` when unavailable     |
+| `GET`  | `/v1/products`            | None                  | Read the seeded synthetic catalog             |
+| `POST` | `/v1/orders`              | Operator/admin bearer | Create an order; requires `Idempotency-Key`   |
+| `GET`  | `/v1/orders`              | Operator/admin bearer | Principal-scoped cursor-based order list      |
+| `GET`  | `/v1/orders/{orderId}`    | Operator/admin bearer | Retrieve an in-scope order                    |
+| `POST` | `/v1/orders/{orderId}`    | Operator/admin bearer | Apply one allowed state transition            |
+| `GET`  | `/v1/reports/orders`      | Admin bearer only     | Bounded synchronous aggregate JSON/CSV export |
+| `POST` | `/v2/report-jobs`         | Admin bearer only     | Accept a durable asynchronous report job      |
+| `GET`  | `/v2/report-jobs/{jobId}` | Owning admin/admin    | Poll a durable report job                     |
+| `GET`  | `/v2/report-jobs/{jobId}/download` | Owning admin/admin | Create a short-lived private download after completion |
 
 Every response includes `X-Correlation-ID`. A valid caller-supplied value is
 echoed; an invalid or overlong value is replaced with a generated opaque
@@ -23,8 +26,12 @@ identifier. Correlation IDs must not contain customer references.
 
 ## Authentication and authorization
 
-The only accepted scheme is `Authorization: Bearer <opaque-token>`. Local
-fixtures are `operator-a`, `operator-b`, and `admin`. Operators can
+The only accepted scheme is `Authorization: Bearer <token>`. Local fixtures
+are `operator-a`, `operator-b`, and `admin`. The target JWT adapter validates
+Cognito-compatible RS256 access tokens against the exact issuer, client ID,
+token type, lifetime, and rotating JWKS. The configured Cognito groups map to
+`operator` and `admin`; a valid token in neither group receives `403`. OAuth
+scopes are not used for route authorization. Operators can
 create/list/retrieve/transition only their own orders. Admin can manage all
 orders and is the only principal allowed to run aggregate reports. Missing or
 invalid credentials return `401`. Unknown and out-of-scope order IDs both
@@ -44,11 +51,10 @@ order total must not exceed 10,000,000 minor units. The response is `201` with
 `Location: /v1/orders/{orderId}`.
 
 `Idempotency-Key` is required and scoped by authenticated principal, endpoint,
-and key. The service stores a SHA-256 fingerprint of the canonical request,
-never the response or key in logs. An identical replay returns `200` with
+and key. The service stores SHA-256 digests of the key and canonical request,
+never the raw key in persistence or logs. An identical replay returns `200` with
 `Idempotency-Replayed: true`; a different payload using the same scope returns
-`409`. Baseline records live for the lifetime of the local database; the target
-must introduce a 24-hour retention policy.
+`409`. Wave 2 adapters use a 24-hour retention window.
 
 `GET /v1/orders` returns at most the requested bounded page size and an opaque,
 principal-scoped cursor. Results are ordered by `createdAt DESC`, then
@@ -69,6 +75,18 @@ omit `customerReference` and `ownerPrincipal` to minimize disclosure. Invalid
 filters or over-limit requests return `422`. It performs no external calls and
 is an intentionally synchronous baseline constraint.
 
+The `/v1` report remains stable. `/v2/report-jobs` adds an asynchronous
+resource without silently changing `/v1`: job state and an outbox event commit
+atomically, an outbox publisher sends a job reference through a queue port,
+and a worker stores a privacy-minimized artifact through an artifact port. The
+production adapters send only the job ID plus correlation/trace context to SQS
+and store a checksummed artifact in a private, bucket-default-SSE-KMS S3
+bucket. The download route rechecks job scope and `SUCCEEDED` state before
+creating a 60–900 second presigned URL with `Cache-Control: no-store`. These
+adapters are locally verified with injected SDK clients; retry/DLQ,
+encryption-policy, lifecycle, and signed-download behavior require separate
+cloud evidence.
+
 ## Error envelope
 
 All expected errors use:
@@ -88,14 +106,15 @@ connection strings, or full request bodies.
 
 ## Status summary
 
-| Route family | Expected statuses |
-|---|---|
-| Health/readiness | `200`, `503` |
-| Catalog | `200`, `503` |
-| Create order | `200` replay, `201`, `400`, `401`, `409`, `422`, `429`, `500`, `503` |
-| List/retrieve order | `200`, `400`, `401`, `404`, `422`, `429`, `500`, `503` |
-| Transition | `200`, `401`, `404`, `409`, `422`, `429`, `500`, `503` |
-| Report | `200`, `401`, `403`, `422`, `429`, `500`, `503` |
+| Route family        | Expected statuses                                                    |
+| ------------------- | -------------------------------------------------------------------- |
+| Health/readiness    | `200`, `503`                                                         |
+| Catalog             | `200`, `503`                                                         |
+| Create order        | `200` replay, `201`, `400`, `401`, `409`, `422`, `429`, `500`, `503` |
+| List/retrieve order | `200`, `400`, `401`, `404`, `422`, `429`, `500`, `503`               |
+| Transition          | `200`, `401`, `404`, `409`, `422`, `429`, `500`, `503`               |
+| Report              | `200`, `401`, `403`, `422`, `429`, `500`, `503`                      |
+| Report jobs         | `200`, `202`, `400`, `401`, `403`, `404`, `409`, `422`, `500`, `503` |
 
 The local HTML demonstration is outside the canonical API: `GET /` and
 `POST /ui/orders` exist only when `ENVIRONMENT=local`, use the same local

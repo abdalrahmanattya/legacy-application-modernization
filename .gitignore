@@ -13,6 +13,10 @@ coverage/
 tools/baseline/evidence-results/*
 !tools/baseline/evidence-results/.gitkeep
 wave1-evidence/
+infra/.terraform/
+infra/**/*.tfstate*
+infra/**/*.tfplan
+infra/**/*.tfvars
 .cache/
 
 # Infrastructure state and generated cloud artifacts

@@ -5,9 +5,10 @@ const result = spawnSync(
   [
     require.resolve("prettier/bin/prettier.cjs"),
     "--check",
-    "app/baseline",
-    "scripts/baseline",
-    "tests/baseline",
+    "app",
+    "scripts",
+    "tests",
+    "migrations",
   ],
   { stdio: "inherit" },
 );

@@ -1,0 +1,6 @@
+bucket = "REQUIRED-NONPROD-STATE-BUCKET"
+key = "legacy-application-modernization/nonprod.tfstate"
+region = "eu-west-1"
+dynamodb_table = "REQUIRED-NONPROD-LOCK-TABLE"
+encrypt = true
+use_lockfile = true

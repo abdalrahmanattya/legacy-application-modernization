@@ -1,0 +1,48 @@
+name: infrastructure-plan
+on:
+  pull_request:
+    paths: ["infra/**", "docs/wave2/**", "docs/wave3/**", "scripts/infrastructure/**", "tests/infrastructure/**", "tools/infrastructure/**", ".github/workflows/infra-plan.yml"]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v4.0.1
+        with: { terraform_version: 1.15.8 }
+      - run: terraform -chdir=infra fmt -check -recursive
+      - run: terraform -chdir=infra init -backend=false -input=false
+      - run: terraform -chdir=infra validate
+      - name: Validate bootstrap and identity roots
+        run: |
+          for root in infra/bootstrap infra/identity infra/envs/nonprod infra/envs/prod; do
+            terraform -chdir="$root" init -backend=false -input=false
+            terraform -chdir="$root" validate
+          done
+      - name: Run credential-free infrastructure policy gates
+        run: node scripts/infrastructure/policy-check.js
+      - name: Run infrastructure/runtime cross-wire checks
+        run: node scripts/infrastructure/crosswire-check.js
+      - name: Run rendered task-definition semantic checks
+        run: node --test tests/infrastructure/task-definitions.test.js
+      - name: Run deterministic cost and operations checks
+        run: |
+          node --test tests/infrastructure/cost-calculator.test.js
+          node scripts/infrastructure/operations-check.js
+      - name: Trivy IaC configuration scan (hosted evidence)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: 1
+          format: json
+          output: trivy-infra-config.json
+      - name: Upload Trivy IaC evidence
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: wave2-trivy-infra-config
+          path: trivy-infra-config.json
+          if-no-files-found: error

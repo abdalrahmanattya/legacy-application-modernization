@@ -1,0 +1,14 @@
+[
+  {
+    "name": "outbox-publisher",
+    "image": "${image}",
+    "essential": true,
+    "stopTimeout": 40,
+    "readonlyRootFilesystem": true,
+    "user": "1000",
+    "command": ["node", "app/processes/outbox-publisher.js"],
+    "environment": ${environment},
+    "secrets": ${secrets},
+    "logConfiguration": {"logDriver": "awslogs", "options": ${log_options}}
+  }
+]

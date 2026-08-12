@@ -6,13 +6,16 @@ made explicit and testable before containerization or AWS migration.
 
 ## Status
 
-Wave 0 is **accepted locally, not production-ready**. The baseline has no AWS
-deployment, endpoint, production data, or cloud execution claim. Node 24
-Node 24 evidence records 7/7 baseline tests passing, while the container
-acceptance script verifies the same lifecycle, ownership, idempotency,
+Waves 0–1 are accepted and the Wave 2 application and AWS-adapter seams are
+implemented locally, but the service is **not production-ready**. The
+repository has no AWS deployment, endpoint, production data, or cloud
+execution claim. Node 24 evidence records 20/20 main-suite tests plus the
+separate 1/1 PostgreSQL integration test passing against a disposable
+database.
+The container acceptance script verifies lifecycle, ownership, idempotency,
 transitions, reports, persistence, filesystem, configuration, and shutdown
-boundaries. These are local results; hosted CI and cloud evidence are not
-claimed.
+boundaries. These are local results; Wave 2 hosted CI and cloud evidence are
+not claimed.
 
 ## Run locally
 
@@ -71,9 +74,38 @@ docker compose down
 
 Compose uses disposable `.env.example` fixtures, a named `/data` volume,
 read-only root filesystem, dropped capabilities, and a non-root image user.
-Production-like container mode fails fast unless distinct `OPERATOR_A_TOKEN`,
-`OPERATOR_B_TOKEN`, and `ADMIN_TOKEN` values are supplied. The image
-healthcheck calls `/readyz` with Node and installs no curl.
+The Compose path explicitly selects credential-free local mode and disposable
+fixture tokens. Production mode does not accept those fixtures: it requires
+PostgreSQL with verified TLS, JWT authentication, and the process-specific
+configuration in the [runtime contract](docs/application-runtime-contract.md).
+The image healthcheck calls `/readyz` with Node and installs no curl.
+
+## Wave 2 application mode
+
+SQLite remains the default credential-free local adapter. The service now
+uses asynchronous repository and identity ports so the same `/v1` behavior can
+run against PostgreSQL. PostgreSQL migrations are intentionally separate from
+application startup:
+
+Use `npm run migrate:postgresql` as a separately controlled task, then run the
+same image as the API, outbox publisher, and report worker. Production requires
+raw `DATABASE_URL` and `CURSOR_SIGNING_SECRET` secret values, verified
+`DATABASE_SSL_CA_PATH` trust material (or inline CA content), exact Cognito issuer/client values, and
+process-specific SQS/S3 settings. See the
+[runtime contract](docs/application-runtime-contract.md) for the exact command,
+environment, secret, IAM, lease, and shutdown contract.
+
+The PostgreSQL adapter provides transactional, 24-hour idempotency records,
+row-locked transitions, signed scope-bound cursors, schema-aware readiness,
+and async pool shutdown. Cognito-compatible JWT validation is tested with
+local JWKS fixtures. The local fixture adapter remains a local evidence seam.
+
+`POST /v2/report-jobs`, `GET /v2/report-jobs/{jobId}`, and the authenticated
+`GET /v2/report-jobs/{jobId}/download` add a versioned durable report-job
+contract while preserving the synchronous `/v1` export. The production ports
+use SQS Standard delivery and private S3 artifacts with SHA-256 checksums and
+short-lived presigned downloads. AWS SDK behavior is tested through injected
+clients only; SQS, S3, KMS, Cognito, and ECS behavior remain cloud-unverified.
 
 ## Evidence and modernization direction
 
