@@ -21,21 +21,14 @@ that a plan is a deployment.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  Client["Client"] --> ALB["Private ALB / HTTPS"]
-  ALB --> API["ECS API task"]
-  API --> DB["Aurora PostgreSQL"]
-  API --> Queue["SQS work queue"]
-  Publisher["ECS outbox publisher"] --> Queue
-  Queue --> Worker["ECS report worker"]
-  Worker --> DB
-  Worker --> Bucket["Private S3 artifacts"]
-  API --> Logs["CloudWatch logs and alarms"]
-  Worker --> Logs
-  WAF["Regional WAF"] -. protects .-> ALB
-  OIDC["GitHub OIDC"] -. planned deployment identity .-> Terraform["Terraform plan-only target"]
-```
+The architecture board below separates locally verified behavior from the AWS
+target design. AWS resources, credentials, and deployment execution are not
+claimed; the target is represented by plan-only Terraform and explicit inputs.
+
+![Legacy application modernization target architecture](docs/diagrams/target-architecture.svg)
+
+The maintainable diagram source is
+[`docs/diagrams/target-architecture.mmd`](docs/diagrams/target-architecture.mmd).
 
 CloudFront is an optional edge layer with a separate us-east-1 certificate.
 The direct Terraform target remains private and requires explicit regional
