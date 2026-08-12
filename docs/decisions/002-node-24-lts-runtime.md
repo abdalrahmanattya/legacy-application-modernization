@@ -13,8 +13,8 @@ familiarity would make the modernization evidence weaker.
 
 Use the Node.js 24 (`Krypton`) LTS line for the first implementation, pinned to
 an exact patch version in the package/container/tool-version files. The Wave 1
-image currently uses `node:24-bookworm-slim` digest
-`sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03`.
+image currently uses `node:24-alpine` digest
+`sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43`.
 Refresh this digest deliberately for a newer Node 24 security patch, then
 rerun tests, audit, image scan, and container smoke checks.
 The official Node.js release table lists v24 as LTS:

@@ -1,5 +1,5 @@
-# Node 24.19.0 Bookworm slim; refresh the digest deliberately with the Node 24 release.
-FROM node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+# Node 24.19.0 Alpine; refresh the digest deliberately with the Node 24 release.
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
 
 ENV NODE_ENV=production \
     ENVIRONMENT=container \
