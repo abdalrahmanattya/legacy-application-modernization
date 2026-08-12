@@ -1,5 +1,6 @@
 const { spawn, execFileSync } = require("node:child_process");
 const fs = require("node:fs");
+const net = require("node:net");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "../..");
@@ -17,6 +18,7 @@ const portB = basePort + 1;
 let dbUrl;
 const children = new Map();
 const evidence = { schema: "wave3.api-recovery.v1", pass: false, errors: [] };
+let cleanupPromise;
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, {
@@ -25,8 +27,55 @@ function run(command, args, options = {}) {
     ...options,
   });
 }
-function cleanup() {
-  for (const child of children.values()) child.kill("SIGKILL");
+function reserveLocalPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address().port;
+      server.close((error) => (error ? reject(error) : resolve(port)));
+    });
+  });
+}
+function publishedDatabasePort() {
+  return Number(
+    run("docker", ["port", name, "5432/tcp"]).match(/:(\d+)\s*$/m)?.[1],
+  );
+}
+function waitForExit(child, timeoutMs = 3000) {
+  if (child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    timer.unref();
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+async function cleanup() {
+  if (cleanupPromise) return cleanupPromise;
+  cleanupPromise = (async () => {
+    const live = [...children.values()];
+    for (const child of live) {
+      if (child.exitCode === null) child.kill("SIGTERM");
+    }
+    await Promise.all(live.map((child) => waitForExit(child)));
+    for (const child of live) {
+      if (child.exitCode === null) child.kill("SIGKILL");
+    }
+    children.clear();
+    try {
+      run("docker", ["rm", "-f", name]);
+    } catch {}
+    try {
+      run("docker", ["volume", "rm", volume]);
+    } catch {}
+  })();
+  return cleanupPromise;
+}
+function emergencyDockerCleanup() {
   try {
     run("docker", ["rm", "-f", name]);
   } catch {}
@@ -34,15 +83,16 @@ function cleanup() {
     run("docker", ["volume", "rm", volume]);
   } catch {}
 }
-process.on("exit", cleanup);
-process.on("SIGINT", () => {
-  cleanup();
-  process.exit(130);
-});
-process.on("SIGTERM", () => {
-  cleanup();
-  process.exit(143);
-});
+process.on("exit", emergencyDockerCleanup);
+let interrupted = false;
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, () => {
+    interrupted = true;
+    void cleanup().finally(() => {
+      process.exitCode = signal === "SIGINT" ? 130 : 143;
+    });
+  });
+}
 
 async function waitFor(url, expected, timeoutMs = 20000) {
   const end = Date.now() + timeoutMs;
@@ -72,6 +122,16 @@ function startApi(port) {
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
+  // Always drain child pipes. Leaving structured request logs unread can fill
+  // the OS pipe buffer and block the API event loop during readiness polling.
+  child.wave3Logs = { stdout: "", stderr: "" };
+  for (const streamName of ["stdout", "stderr"]) {
+    child[streamName].on("data", (chunk) => {
+      child.wave3Logs[streamName] = (
+        child.wave3Logs[streamName] + chunk.toString()
+      ).slice(-32768);
+    });
+  }
   children.set(port, child);
   return child;
 }
@@ -97,6 +157,7 @@ async function request(port, key, body = {}) {
 }
 async function main() {
   process.env.WAVE3_EVIDENCE_OUTPUT = output;
+  if (!dbPort) dbPort = await reserveLocalPort();
   run("docker", ["volume", "create", volume]);
   run("docker", [
     "run",
@@ -113,10 +174,8 @@ async function main() {
     `${volume}:/var/lib/postgresql/data`,
     "postgres:17",
   ]);
-  dbPort = Number(
-    run("docker", ["port", name, "5432/tcp"]).match(/:(\d+)\s*$/m)?.[1],
-  );
-  if (!dbPort)
+  const initialPublishedPort = publishedDatabasePort();
+  if (!initialPublishedPort || initialPublishedPort !== dbPort)
     throw new Error("could not determine disposable PostgreSQL port");
   dbUrl = `postgres://postgres:wave3-local-only@127.0.0.1:${dbPort}/orders`;
   let dbReady = false;
@@ -201,6 +260,7 @@ async function main() {
     (await waitFor(`http://127.0.0.1:${portA}/readyz`, 503, 10000)) ||
     (await waitFor(`http://127.0.0.1:${portB}/readyz`, 503, 10000));
   run("docker", ["start", name]);
+  evidence.databaseEndpointStable = publishedDatabasePort() === dbPort;
   for (let i = 0; i < 60; i++) {
     try {
       run("docker", [
@@ -229,6 +289,7 @@ async function main() {
     evidence.apiKillRecovery &&
     evidence.apiRestartReady &&
     evidence.dbOutage503 &&
+    evidence.databaseEndpointStable &&
     evidence.dbRestartRecovery &&
     evidence.postRecoveryCreate;
   fs.mkdirSync(path.dirname(output), { recursive: true });
@@ -242,10 +303,15 @@ function percentile(values, fraction) {
     Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))
   ];
 }
-main().catch((error) => {
-  evidence.errors.push(error.message);
-  fs.mkdirSync(path.dirname(output), { recursive: true });
-  fs.writeFileSync(output, `${JSON.stringify(evidence, null, 2)}\n`);
-  process.stderr.write(`Wave3 recovery failed: ${error.message}\n`);
-  process.exitCode = 1;
-});
+main()
+  .catch((error) => {
+    evidence.errors.push(error.message);
+    fs.mkdirSync(path.dirname(output), { recursive: true });
+    fs.writeFileSync(output, `${JSON.stringify(evidence, null, 2)}\n`);
+    process.stderr.write(`Wave3 recovery failed: ${error.message}\n`);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await cleanup();
+    if (interrupted && process.exitCode === 0) process.exitCode = 143;
+  });
