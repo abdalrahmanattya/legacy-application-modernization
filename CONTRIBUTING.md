@@ -1,6 +1,6 @@
 # Contributing
 
-This project is an evidence-led modernization exercise. Keep changes small,
+This project is an evidence-led modernization effort. Keep changes small,
 reviewable, and explicit about what was actually measured.
 
 ## Local checks

@@ -17,4 +17,4 @@ The repository contains synthetic fixtures and plan-only AWS infrastructure.
 It must not contain real credentials, production data, Terraform state, or
 cloud-generated evidence. AWS resources, hosted endpoints, Cognito-issued
 tokens, RDS failover, SQS redrive, and production recovery remain unverified
-until a separately approved cloud exercise.
+until a separately approved cloud validation.
