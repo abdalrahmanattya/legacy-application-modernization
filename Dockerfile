@@ -9,7 +9,9 @@ ENV NODE_ENV=production \
 WORKDIR /app
 ARG RDS_CA_SHA256=e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts --no-audit && npm cache clean --force
+RUN apk upgrade --no-cache \
+    && npm ci --omit=dev --ignore-scripts --no-audit \
+    && npm cache clean --force
 COPY app ./app
 COPY scripts ./scripts
 COPY migrations ./migrations
