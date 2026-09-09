@@ -1,5 +1,5 @@
 # Node 24.19.0 Alpine; refresh the digest deliberately with the Node 24 release.
-FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
+FROM node:26-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3
 
 ENV NODE_ENV=production \
     ENVIRONMENT=container \
