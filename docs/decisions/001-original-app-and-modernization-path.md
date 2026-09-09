@@ -7,7 +7,7 @@
 
 The historical `nodejs-application-migration` repository contains useful
 architecture and migration thinking, but also includes artifacts that are not
-appropriate to copy into a new portfolio project. The successor must show
+appropriate to copy into a new public project. The successor must show
 modern cloud judgement while remaining demonstrable without a live account.
 
 ## Decision
